@@ -14,6 +14,10 @@
     color: var(--brand-600);
     border-radius: var(--radius-sm);
   }
+  .chart-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: var(--sp-5); margin: var(--sp-6) 0; }
+  .chart-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: var(--sp-5); }
+  .chart-card h3 { font-size: var(--text-base); font-weight: 600; margin: 0 0 var(--sp-4); }
+  .chart-card canvas { width: 100% !important; max-height: 320px; }
 </style>
 </head>
 <body>
@@ -71,10 +75,19 @@
     </div>
     <div class="empty" id="empty" style="display:none">No products yet — add the first one above.</div>
   </div>
+
+  <h2 class="section-title">Product Analytics</h2>
+  <div class="chart-grid">
+    <div class="chart-card"><h3>Total Stock by Product</h3><canvas id="chart-prod-stock"></canvas></div>
+    <div class="chart-card"><h3>Dealers per Product</h3><canvas id="chart-prod-holders"></canvas></div>
+    <div class="chart-card"><h3>Stock by Dealer & Product</h3><canvas id="chart-dealer-prod"></canvas></div>
+    <div class="chart-card"><h3>Product Stock Status</h3><canvas id="chart-prod-status"></canvas></div>
+  </div>
 </main>
 <div class="toast-wrap" id="toasts"></div>
 <div class="scrim" id="scrim"><div class="modal" id="modal"></div></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <script>
   // ---- shared config (identical in every page — docs/backendStack.md §3) ----
   const SUPABASE_URL      = "https://eotigemxfgszrtrrfdma.supabase.co";   // TODO: your project URL
@@ -275,8 +288,79 @@
 
   document.getElementById("search").addEventListener("input", loadProducts);
 
+  await loadCharts();
   await loadProducts();
 })();
+
+async function loadCharts() {
+  const supabase = supabaseClient;
+  const colors = ['#16a34a','#2563eb','#ea580c','#9333ea','#dc2626','#0891b2','#ca8a04','#db2777','#4f46e5','#059669','#6d28d9','#b91c1c'];
+  const cOpt = { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { padding: 14, usePointStyle: true, font: { size: 11 } } } } };
+
+  const { data: stock } = await supabase
+    .from("dealer_stock").select("quantity, dealer_id, product_id, dealers(shop_name), products(name, is_active)");
+
+  if (!stock || stock.length === 0) return;
+
+  // 1. Total Stock by Product (horizontal bar)
+  const prodMap = {};
+  stock.forEach(s => { const n = s.products?.name || "Unknown"; prodMap[n] = (prodMap[n] || 0) + s.quantity; });
+  const prodLabels = Object.keys(prodMap).sort((a,b) => prodMap[b] - prodMap[a]);
+  new Chart(document.getElementById("chart-prod-stock"), {
+    type: "bar",
+    data: { labels: prodLabels, datasets: [{ label: "Units", data: prodLabels.map(l => prodMap[l]),
+      backgroundColor: colors.slice(0, prodLabels.length), borderRadius: 6 }] },
+    options: { ...cOpt, indexAxis: "y", plugins: { legend: { display: false } },
+      scales: { x: { grid: { display: false } }, y: { grid: { display: false } } } }
+  });
+
+  // 2. Dealers per Product (bar — how many dealers hold each product)
+  const holderMap = {};
+  stock.forEach(s => { const n = s.products?.name || "Unknown"; if (!holderMap[n]) holderMap[n] = new Set(); holderMap[n].add(s.dealer_id); });
+  const hLabels = Object.keys(holderMap).sort((a,b) => holderMap[b].size - holderMap[a].size);
+  new Chart(document.getElementById("chart-prod-holders"), {
+    type: "bar",
+    data: { labels: hLabels, datasets: [{ label: "Dealers", data: hLabels.map(l => holderMap[l].size),
+      backgroundColor: colors.slice(0, hLabels.length), borderRadius: 6 }] },
+    options: { ...cOpt, plugins: { legend: { display: false } },
+      scales: { x: { grid: { display: false } }, y: { grid: { color: "#e5e7eb" }, ticks: { stepSize: 1 } } } }
+  });
+
+  // 3. Stock by Dealer & Product (stacked bar — top 8 dealers, top 6 products)
+  const dealerMap = {};
+  stock.forEach(s => { const n = s.dealers?.shop_name || "Unknown"; dealerMap[n] = (dealerMap[n] || 0) + s.quantity; });
+  const topDealers = Object.keys(dealerMap).sort((a,b) => dealerMap[b] - dealerMap[a]).slice(0, 8);
+  const topProducts = prodLabels.slice(0, 6);
+  const dpDatasets = topProducts.map((p, i) => ({
+    label: p, backgroundColor: colors[i],
+    data: topDealers.map(d => stock.filter(s => (s.dealers?.shop_name || "Unknown") === d && (s.products?.name || "Unknown") === p)
+      .reduce((sum, s) => sum + s.quantity, 0))
+  }));
+  new Chart(document.getElementById("chart-dealer-prod"), {
+    type: "bar",
+    data: { labels: topDealers, datasets: dpDatasets },
+    options: { ...cOpt, scales: { x: { stacked: true, grid: { display: false } }, y: { stacked: true, grid: { color: "#e5e7eb" } } } }
+  });
+
+  // 4. Product Stock Status (doughnut: active vs inactive vs has-stock vs no-stock)
+  const prodActive = {};
+  stock.forEach(s => { const n = s.products?.name || "Unknown"; prodActive[n] = s.products?.is_active; });
+  let hasStock = 0, noStock = 0;
+  prodLabels.forEach(p => { (prodMap[p] > 0) ? hasStock++ : noStock++; });
+  const activeCount = prodLabels.filter(p => prodActive[p] === true).length;
+  const inactiveCount = prodLabels.length - activeCount;
+  new Chart(document.getElementById("chart-prod-status"), {
+    type: "doughnut",
+    data: {
+      labels: ["Active (in stock)", "Active (no stock)", "Inactive"],
+      datasets: [{
+        data: [hasStock - (inactiveCount > 0 ? 0 : 0), noStock, inactiveCount],
+        backgroundColor: ["#16a34a", "#ca8a04", "#9ca3af"], borderWidth: 2, borderColor: "#fff"
+      }]
+    },
+    options: { ...cOpt, cutout: "55%" }
+  });
+}
 </script>
 </body>
 </html>

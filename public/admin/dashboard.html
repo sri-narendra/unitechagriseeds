@@ -10,6 +10,10 @@
   .out { color: var(--danger); font-weight: 700; }
   h1 { font-size: var(--text-3xl); font-weight: 700; margin: var(--sp-6) 0 var(--sp-5); }
   h2 { font-size: var(--text-xl); font-weight: 600; margin: var(--sp-6) 0 var(--sp-3); }
+  .chart-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: var(--sp-5); margin-bottom: var(--sp-6); }
+  .chart-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: var(--sp-5); }
+  .chart-card h3 { font-size: var(--text-base); font-weight: 600; margin: 0 0 var(--sp-4); }
+  .chart-card canvas { width: 100% !important; max-height: 300px; }
 </style>
 </head>
 <body>
@@ -32,7 +36,18 @@
     <div class="stat-card"><div class="stat-label">Active dealers</div><div class="stat-value num" id="stat-dealers">–</div></div>
     <div class="stat-card"><div class="stat-label">Active products</div><div class="stat-value num" id="stat-products">–</div></div>
     <div class="stat-card"><div class="stat-label">Pending orders</div><div class="stat-value num" id="stat-pending">–</div></div>
+    <div class="stat-card"><div class="stat-label">Total sales</div><div class="stat-value num" id="stat-sales">–</div></div>
   </section>
+
+  <h2>Analytics</h2>
+  <div class="chart-grid">
+    <div class="chart-card"><h3>Dealer Stock Distribution</h3><canvas id="chart-dealer-stock"></canvas></div>
+    <div class="chart-card"><h3>Product Stock Distribution</h3><canvas id="chart-product-stock"></canvas></div>
+    <div class="chart-card"><h3>Order Status</h3><canvas id="chart-order-status"></canvas></div>
+    <div class="chart-card"><h3>Returns Status</h3><canvas id="chart-return-status"></canvas></div>
+    <div class="chart-card"><h3>Stock Movement Types</h3><canvas id="chart-movement-type"></canvas></div>
+    <div class="chart-card"><h3>Stock by Dealer & Product</h3><canvas id="chart-dealer-product"></canvas></div>
+  </div>
 
   <h2>Dealer-wise stock</h2>
   <div class="table-wrap">
@@ -86,6 +101,7 @@
 </main>
 <div class="toast-wrap" id="toasts"></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <script>
   // ---- shared config (identical in every page — docs/backendStack.md §3) ----
   const SUPABASE_URL      = "https://eotigemxfgszrtrrfdma.supabase.co";   // TODO: your project URL
@@ -261,7 +277,131 @@
   await loadDealerWise();
   await loadRedistOptions();
   await loadMovement();
+  await loadCharts();
 })();
+
+// ---- Charts ----
+const chartColors = ['#16a34a','#2563eb','#ea580c','#9333ea','#dc2626','#0891b2','#ca8a04','#db2777','#4f46e5','#059669'];
+const chartColorsBg = chartColors.map(c => c + '33');
+
+function chartOpts(title) {
+  return {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: { position: 'bottom', labels: { padding: 16, usePointStyle: true, font: { size: 12 } } },
+      title: { display: false }
+    }
+  };
+}
+
+async function loadCharts() {
+  const [stockData, orderData, returnData, movementData] = await Promise.all([
+    supabase.from("dealer_stock").select("quantity, dealer_id, product_id, dealers(shop_name), products(name)"),
+    supabase.from("orders").select("status, created_at"),
+    supabase.from("returns").select("status"),
+    supabase.from("stock_movements").select("movement_type, quantity, created_at"),
+  ]);
+
+  const stock = stockData.data || [];
+  const orders = orderData.data || [];
+  const returns = returnData.data || [];
+  const movements = movementData.data || [];
+
+  // 1. Dealer Stock Distribution (horizontal bar)
+  const dealerMap = {};
+  stock.forEach(s => {
+    const name = s.dealers?.shop_name || "Unknown";
+    dealerMap[name] = (dealerMap[name] || 0) + s.quantity;
+  });
+  const dealerLabels = Object.keys(dealerMap).sort((a,b) => dealerMap[b] - dealerMap[a]).slice(0, 12);
+  new Chart(document.getElementById("chart-dealer-stock"), {
+    type: "bar",
+    data: {
+      labels: dealerLabels,
+      datasets: [{ label: "Total units", data: dealerLabels.map(l => dealerMap[l]),
+        backgroundColor: chartColors.slice(0, dealerLabels.length), borderRadius: 6 }]
+    },
+    options: { ...chartOpts(), indexAxis: "y", plugins: { ...chartOpts().plugins, legend: { display: false } },
+      scales: { x: { grid: { display: false } }, y: { grid: { display: false } } } }
+  });
+
+  // 2. Product Stock Distribution (doughnut)
+  const prodMap = {};
+  stock.forEach(s => { const name = s.products?.name || "Unknown"; prodMap[name] = (prodMap[name] || 0) + s.quantity; });
+  const prodLabels = Object.keys(prodMap).sort((a,b) => prodMap[b] - prodMap[a]).slice(0, 10);
+  new Chart(document.getElementById("chart-product-stock"), {
+    type: "doughnut",
+    data: {
+      labels: prodLabels,
+      datasets: [{ data: prodLabels.map(l => prodMap[l]), backgroundColor: chartColors.slice(0, prodLabels.length), borderWidth: 2, borderColor: "#fff" }]
+    },
+    options: { ...chartOpts(), cutout: "55%" }
+  });
+
+  // 3. Order Status (doughnut)
+  const orderStatusMap = {};
+  orders.forEach(o => { orderStatusMap[o.status] = (orderStatusMap[o.status] || 0) + 1; });
+  const orderLabels = Object.keys(orderStatusMap);
+  const orderColors = { pending: "#ca8a04", sent: "#2563eb", rejected: "#dc2626", fulfilled: "#16a34a" };
+  new Chart(document.getElementById("chart-order-status"), {
+    type: "doughnut",
+    data: {
+      labels: orderLabels.map(l => l.charAt(0).toUpperCase() + l.slice(1)),
+      datasets: [{ data: orderLabels.map(l => orderStatusMap[l]), backgroundColor: orderLabels.map(l => orderColors[l] || "#6b7280"), borderWidth: 2, borderColor: "#fff" }]
+    },
+    options: { ...chartOpts(), cutout: "55%" }
+  });
+
+  // 4. Returns Status (doughnut)
+  const returnStatusMap = {};
+  returns.forEach(r => { returnStatusMap[r.status] = (returnStatusMap[r.status] || 0) + 1; });
+  const returnLabels = Object.keys(returnStatusMap);
+  const returnColors = { pending: "#ca8a04", accepted: "#16a34a", rejected: "#dc2626" };
+  new Chart(document.getElementById("chart-return-status"), {
+    type: "doughnut",
+    data: {
+      labels: returnLabels.map(l => l.charAt(0).toUpperCase() + l.slice(1)),
+      datasets: [{ data: returnLabels.map(l => returnStatusMap[l]), backgroundColor: returnLabels.map(l => returnColors[l] || "#6b7280"), borderWidth: 2, borderColor: "#fff" }]
+    },
+    options: { ...chartOpts(), cutout: "55%" }
+  });
+
+  // 5. Stock Movement Types (pie)
+  const movTypeMap = {};
+  movements.forEach(m => { movTypeMap[m.movement_type] = (movTypeMap[m.movement_type] || 0) + 1; });
+  const movLabels = Object.keys(movTypeMap);
+  const movColors = { ALLOCATION: "#2563eb", SALE: "#16a34a", ORDER: "#ea580c", RETURN: "#dc2626", REDISTRIBUTE: "#9333ea" };
+  new Chart(document.getElementById("chart-movement-type"), {
+    type: "pie",
+    data: {
+      labels: movLabels.map(l => l.charAt(0) + l.slice(1).toLowerCase()),
+      datasets: [{ data: movLabels.map(l => movTypeMap[l]), backgroundColor: movLabels.map(l => movColors[l] || "#6b7280"), borderWidth: 2, borderColor: "#fff" }]
+    },
+    options: chartOpts()
+  });
+
+  // 6. Dealer x Product stacked bar (top 8 dealers, top 6 products)
+  const topDealers = dealerLabels.slice(0, 8);
+  const prodMapAll = {};
+  stock.forEach(s => { const name = s.products?.name || "Unknown"; prodMapAll[name] = (prodMapAll[name] || 0) + s.quantity; });
+  const topProducts = Object.keys(prodMapAll).sort((a,b) => prodMapAll[b] - prodMapAll[a]).slice(0, 6);
+  const dpDatasets = topProducts.map((p, i) => ({
+    label: p, backgroundColor: chartColors[i],
+    data: topDealers.map(d => {
+      return stock.filter(s => (s.dealers?.shop_name || "Unknown") === d && (s.products?.name || "Unknown") === p)
+        .reduce((sum, s) => sum + s.quantity, 0);
+    })
+  }));
+  new Chart(document.getElementById("chart-dealer-product"), {
+    type: "bar",
+    data: { labels: topDealers, datasets: dpDatasets },
+    options: { ...chartOpts(), scales: { x: { stacked: true, grid: { display: false } }, y: { stacked: true, grid: { color: "#e5e7eb" } } } }
+  });
+
+  // Update sales stat
+  document.getElementById("stat-sales").textContent = movements.filter(m => m.movement_type === "SALE").length;
+}
 </script>
 </body>
 </html>

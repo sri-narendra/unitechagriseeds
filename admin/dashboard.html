@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dashboard — Admin Portal</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+  .in { color: var(--success); font-weight: 700; }
+  .out { color: var(--danger); font-weight: 700; }
+  h1 { font-size: var(--text-3xl); font-weight: 700; margin: var(--sp-6) 0 var(--sp-5); }
+  h2 { font-size: var(--text-xl); font-weight: 600; margin: var(--sp-6) 0 var(--sp-3); }
+</style>
+</head>
+<body>
+<header class="top"><div class="container top-inner">
+  <a class="brand" href="dashboard.html">🌿 Unitech Agri Seeds — Admin</a>
+  <nav class="tabs">
+    <a class="tab active" href="dashboard.html">Dashboard</a>
+    <a class="tab" href="products.html">Products</a>
+    <a class="tab" href="dealers.html">Dealers</a>
+    <a class="tab" href="orders.html">Orders</a>
+    <a class="tab" href="returns.html">Returns</a>
+  </nav>
+  <button id="logout" class="btn btn-ghost btn-sm">Log out</button>
+</div></header>
+
+<main class="container">
+  <h1>Dashboard</h1>
+
+  <section class="stat-grid">
+    <div class="stat-card"><div class="stat-label">Active dealers</div><div class="stat-value num" id="stat-dealers">–</div></div>
+    <div class="stat-card"><div class="stat-label">Active products</div><div class="stat-value num" id="stat-products">–</div></div>
+    <div class="stat-card"><div class="stat-label">Pending orders</div><div class="stat-value num" id="stat-pending">–</div></div>
+  </section>
+
+  <h2>Dealer-wise stock</h2>
+  <div class="table-wrap">
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Dealer</th><th>Village</th><th class="num">Total units</th><th>Status</th></tr></thead>
+        <tbody id="dw-rows"></tbody>
+      </table>
+    </div>
+    <div class="empty" id="dw-empty" style="display:none">No dealer stock yet.</div>
+  </div>
+
+  <h2>Redistribute stock</h2>
+  <div class="form-card" style="max-width:640px">
+    <form id="redist-form">
+      <div class="field">
+        <label for="from-d">From dealer</label>
+        <select id="from-d" required></select>
+      </div>
+      <div class="field">
+        <label for="to-d">To dealer</label>
+        <select id="to-d" required></select>
+      </div>
+      <div class="field">
+        <label>Items to move</label>
+        <div class="field-row">
+          <select id="r-product"></select>
+          <input id="r-qty" type="number" min="1" step="1" inputmode="numeric" value="1" style="width:90px">
+          <button class="btn btn-ghost btn-sm" id="r-add" type="button">+ Add</button>
+        </div>
+        <div id="r-list" class="hint" style="margin-top:8px">No items added yet.</div>
+      </div>
+      <div class="btn-group">
+        <button class="btn btn-primary" id="r-submit" type="submit" disabled>Move stock</button>
+      </div>
+      <p class="hint" style="margin-top:8px">One atomic move: source −qty, target +qty
+      for every item. Move stock from excess dealers to low-stock dealers.</p>
+    </form>
+  </div>
+
+  <h2>Recent stock movement</h2>
+  <div class="table-wrap">
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>When</th><th>Dealer</th><th>Product</th><th class="num">Quantity</th><th>Type</th></tr></thead>
+        <tbody id="mv-rows"></tbody>
+      </table>
+    </div>
+    <div class="empty" id="mv-empty" style="display:none">No stock movement yet.</div>
+  </div>
+</main>
+<div class="toast-wrap" id="toasts"></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+  // ---- shared config (identical in every page — docs/backendStack.md §3) ----
+  const SUPABASE_URL      = "https://eotigemxfgszrtrrfdma.supabase.co";   // TODO: your project URL
+  const SUPABASE_ANON_KEY = "sb_publishable_Our1GSi2nUfzrNq6tdE1IA_iv75P5gN";                     // TODO: your anon key (public by design)
+  const LOW_STOCK_MAX     = 0;                            // dealer total <= this = low stock
+  const EXCESS_TOTAL      = 1000;                         // dealer total >= this = excess stock
+  const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  const $ = s => document.querySelector(s);
+  const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]);
+  const fmtDate = iso => iso ? new Date(iso).toLocaleString() : "";
+  function toast(msg, ok = true) {
+    const t = document.createElement("div");
+    t.className = "toast" + (ok ? "" : " err");
+    t.textContent = msg;
+    $("#toasts").appendChild(t);
+    requestAnimationFrame(() => t.classList.add("show"));
+    setTimeout(() => { t.classList.remove("show"); setTimeout(() => t.remove(), 300); }, 3000);
+  }
+  function friendly(err) {
+    const m = String(err && err.message || err || "");
+    if (m.includes("INSUFFICIENT_STOCK")) return "Source dealer does not have that much stock.";
+    if (m.includes("VALIDATION_ERROR"))   return "Please check the form — quantity must be positive and dealers must differ.";
+    if (m.includes("NOT_PENDING"))        return "This request was already processed.";
+    if (m.includes("FORBIDDEN"))          return "You are not allowed to do that.";
+    if (m.includes("NOT_FOUND"))          return "This record no longer exists.";
+    return "Something went wrong. Please try again.";
+  }
+  async function getSession() { const { data } = await supabaseClient.auth.getSession(); return data.session || null; }
+  function go(url) { location.href = url; }
+</script>
+<script>
+(async () => {
+  const supabase = supabaseClient;
+  // ---- auth guard (admin only) ----
+  const session = await getSession();
+  if (!session) return go("index.html");
+  if (session.user.app_metadata.role !== "admin") {
+    await supabase.auth.signOut(); return go("index.html");
+  }
+  document.getElementById("logout").addEventListener("click",
+    () => supabase.auth.signOut().then(() => go("index.html")));
+
+  // ---- top stats ----
+  async function loadStats() {
+    const [{ count: dealers }, { count: products }, { count: pending }] = await Promise.all([
+      supabase.from("dealers").select("*", { count: "exact", head: true }).eq("is_active", true).is("deleted_at", null),
+      supabase.from("products").select("*", { count: "exact", head: true }).eq("is_active", true).is("deleted_at", null),
+      supabase.from("orders").select("*", { count: "exact", head: true }).eq("status", "pending"),
+    ]);
+    document.getElementById("stat-dealers").textContent = dealers ?? 0;
+    document.getElementById("stat-products").textContent = products ?? 0;
+    document.getElementById("stat-pending").textContent = pending ?? 0;
+  }
+
+  // ---- dealer-wise stock (aggregated per dealer) ----
+  async function loadDealerWise() {
+    const { data } = await supabase
+      .from("dealer_stock")
+      .select("quantity, dealer_id, dealers(shop_name, village)");
+    const map = new Map();
+    (data || []).forEach(r => {
+      const cur = map.get(r.dealer_id) || {
+        total: 0, shop: r.dealers ? r.dealers.shop_name : "Unknown",
+        village: r.dealers ? r.dealers.village : "",
+      };
+      cur.total += r.quantity;
+      map.set(r.dealer_id, cur);
+    });
+    const rows = document.getElementById("dw-rows");
+    const empty = document.getElementById("dw-empty");
+    if (map.size === 0) { empty.style.display = "block"; rows.innerHTML = ""; return; }
+    empty.style.display = "none";
+    rows.innerHTML = [...map.entries()].map(([, d]) => {
+      const status = d.total <= LOW_STOCK_MAX ? '<span class="pill pill-low">⚠ low</span>'
+        : d.total >= EXCESS_TOTAL ? '<span class="pill pill-excess">excess</span>'
+        : '<span class="pill pill-muted">ok</span>';
+      return `<tr><td>${esc(d.shop)}</td><td>${esc(d.village || "—")}</td>
+        <td class="num">${d.total}</td><td>${status}</td></tr>`;
+    }).join("");
+  }
+
+  // ---- redistribute form (multi-item — §5.5) ----
+  let redistProducts = [];
+
+  async function loadRedistOptions() {
+    const [{ data: dealers }, { data: products }] = await Promise.all([
+      supabase.from("dealers").select("id, shop_name").eq("is_active", true).is("deleted_at", null).order("shop_name"),
+      supabase.from("products").select("id, name").eq("is_active", true).is("deleted_at", null).order("name"),
+    ]);
+    redistProducts = products || [];
+    const opt = d => `<option value="${d.id}">${esc(d.shop_name || d.name)}</option>`;
+    const dOpts = (dealers || []).map(opt).join("");
+    const pOpts = (products || []).map(opt).join("");
+    document.getElementById("from-d").innerHTML = dOpts;
+    document.getElementById("to-d").innerHTML = dOpts;
+    document.getElementById("r-product").innerHTML = pOpts;
+  }
+
+  // ---- redistribute: multi-item builder ----
+  const redistItems = new Map();   // product_id -> quantity
+
+  function renderRedistItems() {
+    const list = document.getElementById("r-list");
+    const submit = document.getElementById("r-submit");
+    if (redistItems.size === 0) { list.textContent = "No items added yet."; submit.disabled = true; return; }
+    list.innerHTML = [...redistItems.entries()].map(([pid, qty]) => {
+      const p = redistProducts.find(x => x.id === pid);
+      return `${esc(p ? p.name : pid)} × ${qty}`;
+    }).join(" · ");
+    submit.disabled = false;
+  }
+
+  document.getElementById("r-add").addEventListener("click", () => {
+    const pid = document.getElementById("r-product").value;
+    const qty = Number(document.getElementById("r-qty").value);
+    if (!pid) return toast("Choose a product first.", false);
+    if (!Number.isSafeInteger(qty) || qty <= 0) return toast("Enter a positive whole number.", false);
+    redistItems.set(pid, (redistItems.get(pid) || 0) + qty);
+    renderRedistItems();
+  });
+
+  document.getElementById("redist-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const btn = document.getElementById("r-submit");
+    const p_from_dealer = document.getElementById("from-d").value;
+    const p_to_dealer = document.getElementById("to-d").value;
+    if (p_from_dealer === p_to_dealer) return toast("Choose two different dealers.", false);
+    if (redistItems.size === 0) return toast("Add at least one item to move.", false);
+    btn.disabled = true;
+    try {
+      const p_items = [...redistItems.entries()].map(([product_id, quantity]) => ({ product_id, quantity }));
+      const { error } = await supabase.rpc("redistribute_stock", {
+        p_from_dealer, p_to_dealer, p_items,
+      });
+      if (error) throw error;
+      const total = p_items.reduce((s, i) => s + i.quantity, 0);
+      toast(`Moved ${total} units (${p_items.length} item${p_items.length === 1 ? "" : "s"}).`);
+      redistItems.clear();
+      renderRedistItems();
+      await loadDealerWise();
+      await loadMovement();
+    } catch (ex) {
+      toast(friendly(ex), false);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  // ---- recent movement ----
+  async function loadMovement() {
+    const { data } = await supabase
+      .from("stock_movements")
+      .select("quantity, movement_type, created_at, dealers(shop_name), products(name)")
+      .order("created_at", { ascending: false })
+      .limit(12);
+    const rows = document.getElementById("mv-rows");
+    const empty = document.getElementById("mv-empty");
+    if (!data || data.length === 0) { empty.style.display = "block"; rows.innerHTML = ""; return; }
+    empty.style.display = "none";
+    rows.innerHTML = data.map(m => {
+      const isIn = m.quantity > 0;
+      return `<tr>
+        <td>${fmtDate(m.created_at)}</td>
+        <td>${esc(m.dealers ? m.dealers.shop_name : "—")}</td>
+        <td>${esc(m.products ? m.products.name : "—")}</td>
+        <td class="num"><span class="${isIn ? "in" : "out"}">${isIn ? "+" : ""}${m.quantity}</span></td>
+        <td>${esc(m.movement_type)}</td>
+      </tr>`;
+    }).join("");
+  }
+
+  await loadStats();
+  await loadDealerWise();
+  await loadRedistOptions();
+  await loadMovement();
+})();
+</script>
+</body>
+</html>

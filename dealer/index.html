@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dealer Login — Unitech Agri Seeds</title>
+<link rel="stylesheet" href="shared.css">
+</head>
+<body>
+<div class="login-wrap">
+  <a class="brand" href="index.html">🌿 Unitech Agri Seeds</a>
+  <div class="card">
+    <h1 class="section-title">Dealer login</h1>
+    <form id="login-form">
+      <div class="field">
+        <label for="account-id">Account ID</label>
+        <input id="account-id" autocomplete="username" required placeholder="e.g. dealer01">
+      </div>
+      <div class="field">
+        <label for="password">Password</label>
+        <input id="password" type="password" autocomplete="current-password" required>
+        <button type="button" id="pw-toggle" class="hint" style="background:none;border:none;padding:4px 0;cursor:pointer;text-decoration:underline">Show password</button>
+      </div>
+      <p class="err-text" id="err"></p>
+      <button class="btn btn-primary" id="submit" type="submit" style="width:100%">Log in</button>
+      <p class="hint" style="margin-top:var(--sp-3)">Your Account ID and password are
+      issued by the company. Trouble logging in? Contact the head office.</p>
+    </form>
+  </div>
+</div>
+<div class="toast-wrap" id="toasts"></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+  // ---- shared config (identical in every page — docs/backendStack.md §3) ----
+  const SUPABASE_URL      = "https://eotigemxfgszrtrrfdma.supabase.co";   // TODO: your project URL
+  const SUPABASE_ANON_KEY = "sb_publishable_Our1GSi2nUfzrNq6tdE1IA_iv75P5gN";                     // TODO: your anon key (public by design)
+  const LOGIN_DOMAIN      = "@agri.local";       // dealer Account ID -> login email
+  const LOW_STOCK_MAX     = 0;                            // dealer total <= this = low stock
+  const EXCESS_TOTAL      = 1000;                         // dealer total >= this = excess stock
+  const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  const $ = s => document.querySelector(s);
+  function go(url) { location.href = url; }
+  // "Dealer 001" -> "dealer-001" (docs/backendStack.md §3)
+  function normalizeAccountId(raw) {
+    return String(raw || "").trim().toLowerCase()
+      .replace(/[^a-z0-9-]+/g, "-").replace(/-{2,}/g, "-").replace(/^-+|-+$/g, "");
+  }
+</script>
+<script>
+(async () => {
+  const supabase = supabaseClient;
+  // already logged in? go straight to stats
+  const { data } = await supabase.auth.getSession();
+  if (data.session && data.session.user.app_metadata.dealer_id && data.session.user.app_metadata.role === "dealer") return go("stock.html");
+
+  document.getElementById("pw-toggle").addEventListener("click", () => {
+    const input = document.getElementById("password");
+    input.type = input.type === "password" ? "text" : "password";
+    document.getElementById("pw-toggle").textContent = input.type === "password" ? "Show password" : "Hide password";
+  });
+
+  document.getElementById("login-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const btn = document.getElementById("submit");
+    const err = document.getElementById("err");
+    err.classList.remove("show");
+    btn.disabled = true;
+    try {
+      const accountId = normalizeAccountId(document.getElementById("account-id").value);
+      const password = document.getElementById("password").value;
+      const { error } = await supabase.auth.signInWithPassword({
+        email: accountId + LOGIN_DOMAIN,
+        password,
+      });
+      if (error) throw error;
+      // offer the browser's password manager to save the login
+      try {
+        if (window.PasswordCredential && navigator.credentials && navigator.credentials.store) {
+          await navigator.credentials.store(new window.PasswordCredential(document.getElementById("login-form")));
+        }
+      } catch (err) { /* password manager unavailable — ignore */ }
+      go("stock.html");
+    } catch (ex) {
+      err.textContent = String(ex.message || "").includes("Invalid login credentials")
+        ? "Wrong Account ID or password."
+        : "Could not sign in. Please try again.";
+      err.classList.add("show");
+      btn.disabled = false;
+    }
+  });
+})();
+</script>
+</body>
+</html>

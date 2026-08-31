@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Order Stock — Dealer Portal</title>
+<link rel="stylesheet" href="shared.css">
+</head>
+<body class="dealer-portal">
+<header class="top"><div class="container top-inner">
+  <a class="brand" href="stock.html">🌿 Unitech Agri Seeds</a>
+  <nav class="tabs dealer-tabs">
+    <a class="tab" href="stock.html">Stock Stats</a>
+    <a class="tab" href="return.html">Return</a>
+    <a class="tab" href="sale.html">Sale</a>
+    <a class="tab active" href="order.html">Order</a>
+  </nav>
+  <button id="logout" class="btn btn-ghost btn-sm">Log out</button>
+</div></header>
+
+<main class="container">
+  <h1 class="page-title">Order stock</h1>
+
+  <div class="spread" style="margin-bottom:var(--sp-4)">
+    <h2 class="section-title" style="margin:0">Catalogue</h2>
+    <div class="search-input">
+      <input id="catalog-search" placeholder="Search products…">
+    </div>
+  </div>
+  <div class="grid" id="catalogue">
+    <div class="skeleton" style="height:200px"></div>
+    <div class="skeleton" style="height:200px"></div>
+    <div class="skeleton" style="height:200px"></div>
+  </div>
+
+  <h2 class="section-title">Cart</h2>
+  <div class="card">
+    <div id="cart-lines" class="hint">Cart is empty — add products above.</div>
+    <div style="margin-top:var(--sp-3)">
+      <button class="btn btn-primary" id="submit" disabled>Submit order request</button>
+    </div>
+    <p class="hint" style="margin-top:var(--sp-2)">The company reviews your request and
+    sends the stock. Stock reaches your inventory only after approval.</p>
+  </div>
+
+  <h2 class="section-title">My orders</h2>
+  <div class="table-wrap">
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Requested</th><th>Items</th><th>Status</th></tr></thead>
+        <tbody id="order-rows"></tbody>
+      </table>
+    </div>
+    <div class="empty" id="orders-empty" style="display:none">No orders yet.</div>
+  </div>
+</main>
+<div class="toast-wrap" id="toasts"></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+  // ---- shared config (identical in every page — docs/backendStack.md §3) ----
+  const SUPABASE_URL      = "https://eotigemxfgszrtrrfdma.supabase.co";   // TODO: your project URL
+  const SUPABASE_ANON_KEY = "sb_publishable_Our1GSi2nUfzrNq6tdE1IA_iv75P5gN";                     // TODO: your anon key (public by design)
+  const LOGIN_DOMAIN      = "@agri.local";       // dealer Account ID -> login email
+  const LOW_STOCK_MAX     = 0;                            // dealer total <= this = low stock
+  const EXCESS_TOTAL      = 1000;                         // dealer total >= this = excess stock
+  const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  const $ = s => document.querySelector(s);
+  const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]);
+  const fmtDate = iso => iso ? new Date(iso).toLocaleString() : "";
+  function toast(msg, ok = true) {
+    const t = document.createElement("div");
+    t.className = "toast" + (ok ? "" : " err");
+    t.textContent = msg;
+    $("#toasts").appendChild(t);
+    requestAnimationFrame(() => t.classList.add("show"));
+    setTimeout(() => { t.classList.remove("show"); setTimeout(() => t.remove(), 300); }, 3000);
+  }
+  function pill(status) { return '<span class="pill pill-' + esc(status) + '">' + esc(status) + "</span>"; }
+  function friendly(err) {
+    const m = String(err && err.message || err || "");
+    if (m.includes("INSUFFICIENT_STOCK"))    return "Not enough stock for this quantity.";
+    if (m.includes("VALIDATION_ERROR"))      return "Please enter a positive whole number.";
+    if (m.includes("RETURN_NOT_PENDING"))    return "This return was already processed.";
+    if (m.includes("ORDER_NOT_PENDING"))     return "This order was already processed.";
+    if (m.includes("CONCURRENT_MODIFICATION")) return "Another action modified this record. Please refresh.";
+    if (m.includes("PRODUCT_INACTIVE"))      return "This product is no longer active.";
+    if (m.includes("NOT_PENDING"))           return "This request was already processed.";
+    if (m.includes("FORBIDDEN"))             return "You are not allowed to do that.";
+    if (m.includes("NOT_FOUND"))             return "This record no longer exists.";
+    return "Something went wrong. Please try again.";
+  }
+  async function getSession() { const { data } = await supabaseClient.auth.getSession(); return data.session || null; }
+  function go(url) { location.href = url; }
+</script>
+<script>
+(async () => {
+  const supabase = supabaseClient;
+  // ---- auth guard (dealer only) ----
+  const session = await getSession();
+  if (!session) return go("index.html");
+  const dealerId = session.user.app_metadata.dealer_id;
+  const role = session.user.app_metadata.role;
+  if (role !== "dealer" || !dealerId) { await supabase.auth.signOut(); return go("index.html"); }
+  document.getElementById("logout").addEventListener("click",
+    () => supabase.auth.signOut().then(() => go("index.html")));
+
+  let products = [];
+  let orderClientRef = crypto.randomUUID();
+  const cart = new Map();   // product_id -> quantity
+  const nameOf = id => { const p = products.find(x => x.id === id); return p ? p.name : "Product"; };
+
+  async function loadCatalogue() {
+    const { data } = await supabase
+      .from("products").select("id, name, image_url")
+      .eq("is_active", true).is("deleted_at", null).order("name");
+    products = data || [];
+    const cat = document.getElementById("catalogue");
+    if (products.length === 0) {
+      cat.innerHTML = '<div class="empty">No products in the catalogue yet.</div>';
+      return;
+    }
+    const q = (document.getElementById("catalog-search").value || "").trim().toLowerCase();
+    const list = q ? products.filter(p => (p.name || "").toLowerCase().includes(q)) : products;
+    if (list.length === 0) {
+      cat.innerHTML = '<div class="empty">No products match your search.</div>';
+      return;
+    }
+    cat.innerHTML = list.map(p => `
+      <div class="pcard">
+        ${p.image_url && /^https?:\/\//i.test(p.image_url) ? `<img src="${esc(p.image_url)}" alt="${esc(p.name)}">` : `<div class="img-ph">🌾</div>`}
+        <h3>${esc(p.name)}</h3>
+        <input type="number" min="1" step="1" inputmode="numeric" placeholder="Qty"
+               value="${cart.has(p.id) ? cart.get(p.id) : ""}" data-id="${p.id}">
+        <button class="btn btn-secondary btn-sm add-btn" data-id="${p.id}" style="margin-top:8px;width:100%">Add to cart</button>
+      </div>`).join("");
+    cat.querySelectorAll(".add-btn").forEach(b => b.addEventListener("click", () => {
+      const id = b.dataset.id;
+      const input = cat.querySelector(`input[data-id="${id}"]`);
+      const qty = Number(input.value);
+      if (!Number.isSafeInteger(qty) || qty <= 0) return toast("Enter a positive whole number.", false);
+      cart.set(id, qty);
+      renderCart();
+      toast(`${nameOf(id)} added to cart.`);
+    }));
+  }
+
+  function renderCart() {
+    const box = document.getElementById("cart-lines");
+    const submit = document.getElementById("submit");
+    if (cart.size === 0) {
+      box.textContent = "Cart is empty — add products above.";
+      submit.disabled = true;
+      return;
+    }
+    box.innerHTML = "<table><tbody>" + [...cart.entries()].map(([id, qty]) => `
+      <tr><td>${esc(nameOf(id))}</td><td class="num">${qty} units</td>
+      <td style="text-align:right"><button class="btn btn-danger btn-sm rm-btn" data-id="${id}">Remove</button></td></tr>`).join("")
+      + "</tbody></table>";
+    box.querySelectorAll(".rm-btn").forEach(b => b.addEventListener("click", () => {
+      cart.delete(b.dataset.id); renderCart();
+    }));
+    submit.disabled = false;
+  }
+
+  document.getElementById("submit").addEventListener("click", async () => {
+    const submit = document.getElementById("submit");
+    if (cart.size === 0) return;
+    submit.disabled = true;
+    try {
+      const items = [...cart.entries()].map(([product_id, quantity]) => ({ product_id, quantity }));
+      const { data, error } = await supabase.rpc("create_order", {
+        p_items: items,
+        p_client_ref: orderClientRef,
+      });
+      if (error) throw error;
+      orderClientRef = crypto.randomUUID();
+      cart.clear();
+      renderCart();
+      toast("Order request submitted.");
+      await loadOrders();
+      await loadCatalogue();
+    } catch (ex) {
+      toast(friendly(ex), false);
+    } finally {
+      submit.disabled = cart.size === 0;
+    }
+  });
+
+  async function loadOrders() {
+    const { data } = await supabase
+      .from("orders")
+      .select("id, status, created_at, order_items(quantity, products(name))")
+      .eq("dealer_id", dealerId)
+      .order("created_at", { ascending: false })
+      .limit(20);
+    const rows = document.getElementById("order-rows");
+    const empty = document.getElementById("orders-empty");
+    if (!data || data.length === 0) { empty.style.display = "block"; rows.innerHTML = ""; return; }
+    empty.style.display = "none";
+    rows.innerHTML = data.map(o => `<tr>
+      <td>${fmtDate(o.created_at)}</td>
+      <td>${(o.order_items || []).map(i => `${esc(i.products ? i.products.name : "—")} × ${i.quantity}`).join("<br>")}</td>
+      <td>${pill(o.status)}</td>
+    </tr>`).join("");
+  }
+
+  document.getElementById("catalog-search").addEventListener("input", loadCatalogue);
+
+  await loadCatalogue();
+  renderCart();
+  await loadOrders();
+})();
+</script>
+</body>
+</html>

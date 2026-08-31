@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Our Products — Unitech Agri Seeds</title>
+<style>
+:root{--color-primary:#2E7D32;--color-primary-600:#1B5E20;--color-primary-50:#E8F5E9;--color-warn:#EF6C00;--color-warn-50:#FFF3E0;--color-bg:#F4F7F4;--color-surface:#FFFFFF;--color-border:#D9E2DC;--color-text:#1B2B22;--color-muted:#5B6B61;--color-danger:#C62828;--color-danger-50:#FFEBEE;--color-info:#1565C0;--color-info-50:#E3F2FD;--space-1:4px;--space-2:8px;--space-3:12px;--space-4:16px;--space-5:24px;--space-6:32px;--space-8:48px;--motion-fast:150ms;--motion-base:200ms;--motion-slow:300ms;--radius:10px;--radius-sm:6px}
+*{box-sizing:border-box}
+body{margin:0;background:var(--color-bg);color:var(--color-text);font:400 .875rem/1.5 Inter,-apple-system,"Segoe UI",Roboto,sans-serif}
+.container{max-width:1080px;margin:0 auto;padding:0 var(--space-4)}
+h1{font-size:1.75rem;font-weight:700;line-height:1.2;margin:var(--space-5) 0 var(--space-4)}
+.card{background:var(--color-surface);border:1px solid var(--color-border);border-radius:8px;padding:var(--space-5);box-shadow:0 1px 2px rgba(0,0,0,.04);margin-bottom:var(--space-4)}
+header.top{background:var(--color-surface);border-bottom:1px solid var(--color-border)}
+.top-inner{display:flex;align-items:center;justify-content:space-between;gap:var(--space-4);padding:var(--space-3) 0}
+.brand{display:flex;align-items:center;gap:var(--space-2);font-weight:700;color:var(--color-primary);text-decoration:none;font-size:1rem}
+.tabs{display:flex;gap:var(--space-2);flex-wrap:wrap}
+.tab{padding:var(--space-2) var(--space-3);text-decoration:none;color:var(--color-muted);font-weight:600;border-radius:var(--radius-sm)}
+.tab:hover{background:var(--color-primary-50)}
+.tab.active{color:var(--color-text);box-shadow:inset 0 -2px 0 var(--color-primary)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:var(--space-4)}
+.pcard{background:var(--color-surface);border:1px solid var(--color-border);border-radius:8px;padding:var(--space-3);text-align:center;font-weight:600}
+.pcard img,.img-ph{width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:8px;background:var(--color-primary-50);display:flex;align-items:center;justify-content:center;color:var(--color-primary);font-weight:700;font-size:1.5rem;margin-bottom:var(--space-2)}
+.skeleton{background:linear-gradient(90deg,#e7ece8 25%,#f2f5f2 50%,#e7ece8 75%);background-size:200% 100%;animation:sk 1.2s infinite;border-radius:var(--radius-sm);height:180px}
+@keyframes sk{to{background-position:-200% 0}}
+.empty{text-align:center;color:var(--color-muted);padding:var(--space-6) var(--space-4)}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important}}
+</style>
+</head>
+<body>
+<header class="top"><div class="container top-inner">
+  <a class="brand" href="index.html">🌿 Unitech Agri Seeds</a>
+  <nav class="tabs">
+    <a class="tab" href="index.html">Home</a>
+    <a class="tab" href="about.html">About</a>
+    <a class="tab active" href="products.html">Products</a>
+    <a class="tab" href="contact.html">Contact</a>
+  </nav>
+</div></header>
+<main class="container">
+  <h1>Our products</h1>
+  <div id="list" class="grid">
+    <div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div>
+  </div>
+</main>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+  // ---- shared config (identical in every page — docs/backendStack.md §3) ----
+  const SUPABASE_URL      = "https://eotigemxfgszrtrrfdma.supabase.co";   // TODO: your project URL
+  const SUPABASE_ANON_KEY = "sb_publishable_Our1GSi2nUfzrNq6tdE1IA_iv75P5gN";                     // TODO: your anon key (public by design)
+  const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]);
+</script>
+<script>
+(async () => {
+  const supabase = supabaseClient;
+  const { data: products, error } = await supabase
+    .from("products").select("id,name,image_url")
+    .eq("is_active", true).is("deleted_at", null).order("name");
+  const list = document.getElementById("list");
+  if (error || !products || products.length === 0) {
+    list.innerHTML = '<div class="empty">No products listed yet — check back soon.</div>';
+    return;
+  }
+  list.innerHTML = products.map(p => `
+    <div class="pcard">
+      ${p.image_url && /^https?:\/\//i.test(p.image_url) ? `<img src="${esc(p.image_url)}" alt="${esc(p.name)}">`
+                    : `<div class="img-ph">🌾</div>`}
+      ${esc(p.name)}
+    </div>`).join("");
+})();
+</script>
+</body>
+</html>

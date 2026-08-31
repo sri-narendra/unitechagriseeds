@@ -1,0 +1,16 @@
+# Environment secrets
+.env*
+*.local
+
+# Vercel
+.vercel/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test artifacts
+.playwright-mcp/

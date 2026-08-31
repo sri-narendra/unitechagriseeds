@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Products — Admin Portal</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+  .img-ph {
+    background: var(--brand-100);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--brand-600);
+    border-radius: var(--radius-sm);
+  }
+</style>
+</head>
+<body>
+<header class="top"><div class="container top-inner">
+  <a class="brand" href="dashboard.html">🌿 Unitech Agri Seeds — Admin</a>
+  <nav class="tabs">
+    <a class="tab" href="dashboard.html">Dashboard</a>
+    <a class="tab active" href="products.html">Products</a>
+    <a class="tab" href="dealers.html">Dealers</a>
+    <a class="tab" href="orders.html">Orders</a>
+    <a class="tab" href="returns.html">Returns</a>
+  </nav>
+  <button id="logout" class="btn btn-ghost btn-sm">Log out</button>
+</div></header>
+
+<main class="container">
+  <h1 class="page-title">Products</h1>
+
+  <h2 class="section-title">Add product</h2>
+  <div class="form-card">
+    <form id="add-form">
+      <div class="field">
+        <label for="p-name">Product name</label>
+        <input id="p-name" required placeholder="e.g. Cotton Seed Supreme">
+      </div>
+      <div class="field">
+        <label for="p-image">Image file (optional — stored in Supabase Storage)</label>
+        <input id="p-image" type="file" accept="image/*"
+               onchange="const pv=document.getElementById('p-preview');if(this.files[0]){pv.src=window.URL.createObjectURL(this.files[0]);pv.style.display='block';}">
+      </div>
+      <div class="field">
+        <label for="p-url">…or paste an image URL</label>
+        <input id="p-url" type="url" placeholder="https://…"
+               oninput="const pv=document.getElementById('p-preview');pv.src=this.value;pv.style.display=this.value?'block':'none'">
+      </div>
+      <img id="p-preview" alt="" style="display:none;max-width:120px;max-height:120px;border-radius:var(--radius-sm);margin-bottom:var(--sp-2)">
+      <div class="btn-group">
+        <button class="btn btn-primary" id="add-btn" type="submit">Add product</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="spread" style="margin-top:var(--sp-6);margin-bottom:var(--sp-4)">
+    <h2 class="section-title" style="margin:0">All products</h2>
+    <div class="search-input">
+      <input id="search" placeholder="Search products…">
+    </div>
+  </div>
+  <div class="table-wrap">
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th></th><th>Name</th><th>Status</th><th>Actions</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+    <div class="empty" id="empty" style="display:none">No products yet — add the first one above.</div>
+  </div>
+</main>
+<div class="toast-wrap" id="toasts"></div>
+<div class="scrim" id="scrim"><div class="modal" id="modal"></div></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+  // ---- shared config (identical in every page — docs/backendStack.md §3) ----
+  const SUPABASE_URL      = "https://eotigemxfgszrtrrfdma.supabase.co";   // TODO: your project URL
+  const SUPABASE_ANON_KEY = "sb_publishable_Our1GSi2nUfzrNq6tdE1IA_iv75P5gN";                     // TODO: your anon key (public by design)
+  const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  const $ = s => document.querySelector(s);
+  const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]);
+  function toast(msg, ok = true) {
+    const t = document.createElement("div");
+    t.className = "toast" + (ok ? "" : " err");
+    t.textContent = msg;
+    $("#toasts").appendChild(t);
+    requestAnimationFrame(() => t.classList.add("show"));
+    setTimeout(() => { t.classList.remove("show"); setTimeout(() => t.remove(), 300); }, 3000);
+  }
+  function friendly(err) {
+    const m = String(err && err.message || err || "");
+    if (m.includes("row-level security") || m.includes("42501")) return "You are not allowed to do that.";
+    if (m.includes("foreign key") || m.includes("23503")) return "Cannot delete: this product has history. Deactivate it instead.";
+    return "Something went wrong. Please try again.";
+  }
+  async function getSession() { const { data } = await supabaseClient.auth.getSession(); return data.session || null; }
+  function go(url) { location.href = url; }
+</script>
+<script>
+(async () => {
+  const supabase = supabaseClient;
+  // ---- auth guard (admin only) ----
+  const session = await getSession();
+  if (!session) return go("index.html");
+  if (session.user.app_metadata.role !== "admin") {
+    await supabase.auth.signOut(); return go("index.html");
+  }
+  document.getElementById("logout").addEventListener("click",
+    () => supabase.auth.signOut().then(() => go("index.html")));
+
+  const scrim = document.getElementById("scrim");
+  const modal = document.getElementById("modal");
+  function openModal(html) { modal.innerHTML = html; scrim.classList.add("open"); }
+  function closeModal() { scrim.classList.remove("open"); }
+  scrim.addEventListener("click", e => { if (e.target === scrim) closeModal(); });
+
+  let products = [];
+
+  async function uploadImage(file) {
+    if (file.size > 5 * 1024 * 1024) { alert("Image must be under 5 MB"); throw new Error("Image too large"); }
+    const path = crypto.randomUUID() + "-" + file.name.replace(/[^\w.\-]+/g, "_");
+    const { error } = await supabase.storage.from("product-images").upload(path, file);
+    if (error) throw error;
+    return supabase.storage.from("product-images").getPublicUrl(path).data.publicUrl;
+  }
+
+  async function loadProducts() {
+    const { data } = await supabase.from("products").select("*").is("deleted_at", null).order("name");
+    products = data || [];
+    const rows = document.getElementById("rows");
+    const empty = document.getElementById("empty");
+    if (products.length === 0) { empty.style.display = "block"; rows.innerHTML = ""; return; }
+    const q = (document.getElementById("search").value || "").trim().toLowerCase();
+    const list = q ? products.filter(p =>
+      (p.name || "").toLowerCase().includes(q) || (p.image_url || "").toLowerCase().includes(q)) : products;
+    if (list.length === 0) {
+      rows.innerHTML = '<tr><td colspan="4" class="empty">No products match your search.</td></tr>';
+      return;
+    }
+    empty.style.display = "none";
+    rows.innerHTML = list.map(p => `<tr>
+      <td style="width:56px">${p.image_url
+        ? `<img src="${esc(p.image_url)}" alt="${esc(p.name)}" style="width:40px;height:40px;object-fit:cover;border-radius:var(--radius-sm)">`
+        : `<div class="img-ph" style="width:40px;height:40px">🌾</div>`}</td>
+      <td>${esc(p.name)}</td>
+      <td>${p.is_active ? '<span class="pill pill-active">active</span>' : '<span class="pill pill-muted">inactive</span>'}</td>
+      <td class="row">
+        <button class="btn btn-ghost btn-xs" data-edit="${p.id}">Edit</button>
+        <button class="btn btn-ghost btn-xs" data-holders="${p.id}">Holders</button>
+        <button class="btn btn-ghost btn-xs" data-toggle="${p.id}">${p.is_active ? "Deactivate" : "Activate"}</button>
+        <button class="btn btn-danger btn-xs" data-del="${p.id}">Delete</button>
+      </td></tr>`).join("");
+
+    rows.querySelectorAll("[data-edit]").forEach(b => b.addEventListener("click", () => openEdit(b.dataset.edit)));
+    rows.querySelectorAll("[data-holders]").forEach(b => b.addEventListener("click", () => openHolders(b.dataset.holders)));
+    rows.querySelectorAll("[data-toggle]").forEach(b => b.addEventListener("click", () => toggleActive(b.dataset.toggle)));
+    rows.querySelectorAll("[data-del]").forEach(b => b.addEventListener("click", () => confirmDelete(b.dataset.del)));
+  }
+
+  // ---- add ----
+  document.getElementById("add-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const btn = document.getElementById("add-btn");
+    const name = document.getElementById("p-name").value.trim();
+    if (!name) return toast("Enter a product name.", false);
+    btn.disabled = true;
+    try {
+      const file = document.getElementById("p-image").files[0];
+      const pastedUrl = document.getElementById("p-url").value.trim();
+      if (file && pastedUrl) return toast("Choose a file OR paste a URL — not both.", false);
+      if (pastedUrl && !/^(https?:\/\/|blob:)/i.test(pastedUrl)) return toast("Image URL must start with http(s)://", false);
+      const image_url = file ? await uploadImage(file) : (pastedUrl || null);
+      const { error } = await supabase.from("products").insert({ name, image_url });
+      if (error) throw error;
+      toast("Product added.");
+      document.getElementById("p-name").value = "";
+      document.getElementById("p-image").value = "";
+      await loadProducts();
+    } catch (ex) { toast(friendly(ex), false); }
+    finally { btn.disabled = false; }
+  });
+
+  // ---- edit ----
+  function openEdit(id) {
+    const p = products.find(x => x.id === id);
+    if (!p) return;
+    openModal(`
+      <h3>Edit product</h3>
+      <form id="edit-form">
+        <div class="field"><label>Name</label><input id="e-name" value="${esc(p.name)}" required></div>
+        <div class="field"><label>Replace image file (optional)</label><input id="e-image" type="file" accept="image/*"></div>
+        <div class="field"><label>…or set an image URL</label><input id="e-url" type="url" value="${esc(p.image_url || "")}" placeholder="https://…"></div>
+        <div class="modal-actions">
+          <button class="btn btn-primary" type="submit">Save</button>
+          <button class="btn btn-ghost" type="button" id="e-cancel">Cancel</button>
+        </div>
+      </form>`);
+    document.getElementById("e-cancel").addEventListener("click", closeModal);
+    document.getElementById("edit-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      try {
+        const updates = { name: document.getElementById("e-name").value.trim(),
+                          updated_at: new Date().toISOString() };
+        const file = document.getElementById("e-image").files[0];
+        const eUrl = document.getElementById("e-url").value.trim();
+        if (eUrl && !/^(https?:\/\/|blob:)/i.test(eUrl)) return toast("Image URL must start with http(s)://", false);
+        if (file) updates.image_url = await uploadImage(file);
+        else if (eUrl !== (p.image_url || "")) updates.image_url = eUrl || null;
+        const { error } = await supabase.from("products").update(updates).eq("id", id);
+        if (error) throw error;
+        if (p.image_url && updates.image_url && p.image_url !== updates.image_url) {
+          const oldPath = p.image_url.split("/").pop();
+          await supabase.storage.from("product-images").remove([oldPath]);
+        }
+        closeModal(); toast("Product updated."); await loadProducts();
+      } catch (ex) { toast(friendly(ex), false); }
+    });
+  }
+
+  // ---- product stats: which dealers hold it ----
+  async function openHolders(id) {
+    const p = products.find(x => x.id === id);
+    const { data } = await supabase
+      .from("dealer_stock").select("quantity, dealers(shop_name, village)")
+      .eq("product_id", id).order("quantity", { ascending: false });
+    const rows = (data || []).map(h => `<tr>
+      <td>${esc(h.dealers ? h.dealers.shop_name : "—")}</td>
+      <td>${esc(h.dealers ? h.dealers.village || "—" : "")}</td>
+      <td class="num">${h.quantity}</td></tr>`).join("");
+    openModal(`
+      <h3>${esc(p ? p.name : "")} — who holds it</h3>
+      ${rows ? `<div class="table-wrap"><div class="table-scroll"><table><thead><tr><th>Dealer</th><th>Village</th><th class="num">Units</th></tr></thead><tbody>${rows}</tbody></table></div></div>`
+             : '<p class="hint">No dealer holds this product yet.</p>'}
+      <div class="modal-actions">
+        <button class="btn btn-ghost" id="h-close">Close</button>
+      </div>`);
+    document.getElementById("h-close").addEventListener("click", closeModal);
+  }
+
+  // ---- deactivate / activate ----
+  async function toggleActive(id) {
+    const p = products.find(x => x.id === id);
+    const { error } = await supabase.from("products")
+      .update({ is_active: !p.is_active, updated_at: new Date().toISOString() })
+      .eq("id", id);
+    if (error) return toast(friendly(error), false);
+    toast(p.is_active ? "Product deactivated." : "Product activated.");
+    await loadProducts();
+  }
+
+  // ---- delete (soft-delete: sets deleted_at, history stays intact) ----
+  async function confirmDelete(id) {
+    const p = products.find(x => x.id === id);
+    openModal(`
+      <h3>Delete "${esc(p.name)}"?</h3>
+      <p class="hint">This removes the product from the list. All stock, sales,
+      order and return history is preserved.</p>
+      <div class="modal-actions">
+        <button class="btn btn-danger" id="d-yes">Delete</button>
+        <button class="btn btn-ghost" id="d-no">Cancel</button>
+      </div>`);
+    document.getElementById("d-no").addEventListener("click", closeModal);
+    document.getElementById("d-yes").addEventListener("click", async () => {
+      const { error } = await supabase.from("products")
+        .update({ deleted_at: new Date().toISOString() })
+        .eq("id", id);
+      closeModal();
+      if (error) { toast(friendly(error), false); return; }
+      toast("Product deleted."); await loadProducts();
+    });
+  }
+
+  document.getElementById("search").addEventListener("input", loadProducts);
+
+  await loadProducts();
+})();
+</script>
+</body>
+</html>

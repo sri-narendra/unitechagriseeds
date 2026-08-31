@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Contact — Unitech Agri Seeds</title>
+<style>
+:root{--color-primary:#2E7D32;--color-primary-600:#1B5E20;--color-primary-50:#E8F5E9;--color-warn:#EF6C00;--color-warn-50:#FFF3E0;--color-bg:#F4F7F4;--color-surface:#FFFFFF;--color-border:#D9E2DC;--color-text:#1B2B22;--color-muted:#5B6B61;--color-danger:#C62828;--color-danger-50:#FFEBEE;--color-info:#1565C0;--color-info-50:#E3F2FD;--space-1:4px;--space-2:8px;--space-3:12px;--space-4:16px;--space-5:24px;--space-6:32px;--space-8:48px;--motion-fast:150ms;--motion-base:200ms;--motion-slow:300ms;--radius:10px;--radius-sm:6px}
+*{box-sizing:border-box}
+body{margin:0;background:var(--color-bg);color:var(--color-text);font:400 .875rem/1.5 Inter,-apple-system,"Segoe UI",Roboto,sans-serif}
+.container{max-width:1080px;margin:0 auto;padding:0 var(--space-4)}
+h1{font-size:1.75rem;font-weight:700;line-height:1.2;margin:var(--space-5) 0 var(--space-4)}
+h3{font-size:1rem;font-weight:600;line-height:1.4;margin:0 0 var(--space-2)}
+.card{background:var(--color-surface);border:1px solid var(--color-border);border-radius:8px;padding:var(--space-5);box-shadow:0 1px 2px rgba(0,0,0,.04);margin-bottom:var(--space-4)}
+header.top{background:var(--color-surface);border-bottom:1px solid var(--color-border)}
+.top-inner{display:flex;align-items:center;justify-content:space-between;gap:var(--space-4);padding:var(--space-3) 0}
+.brand{display:flex;align-items:center;gap:var(--space-2);font-weight:700;color:var(--color-primary);text-decoration:none;font-size:1rem}
+.tabs{display:flex;gap:var(--space-2);flex-wrap:wrap}
+.tab{padding:var(--space-2) var(--space-3);text-decoration:none;color:var(--color-muted);font-weight:600;border-radius:var(--radius-sm)}
+.tab:hover{background:var(--color-primary-50)}
+.tab.active{color:var(--color-text);box-shadow:inset 0 -2px 0 var(--color-primary)}
+.muted{color:var(--color-muted)}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important}}
+</style>
+</head>
+<body>
+<header class="top"><div class="container top-inner">
+  <a class="brand" href="index.html">🌿 Unitech Agri Seeds</a>
+  <nav class="tabs">
+    <a class="tab" href="index.html">Home</a>
+    <a class="tab" href="about.html">About</a>
+    <a class="tab" href="products.html">Products</a>
+    <a class="tab active" href="contact.html">Contact</a>
+  </nav>
+</div></header>
+<main class="container">
+  <h1>Contact us</h1>
+  <div class="card">
+    <h3>📍 Office</h3>
+    <p>Unitech Agri Seeds<br>Main Road, Subala<br>District Market, India</p>
+  </div>
+  <div class="card">
+    <h3>📞 Phone</h3>
+    <p>+91 XXXXX XXXXX <span class="muted">(Mon–Sat, 9am–6pm)</span></p>
+  </div>
+  <div class="card">
+    <h3>✉️ Email</h3>
+    <p><a href="mailto:info@unitechagri.example">info@unitechagri.example</a></p>
+  </div>
+  <div class="card">
+    <h3>🤝 Become a dealer</h3>
+    <p>Interested in stocking our products? Call or email us and our team will
+    help you set up your shop in the dealer network.</p>
+  </div>
+</main>
+
+</body>
+</html>

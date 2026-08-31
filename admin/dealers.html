@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dealers — Admin Portal</title>
+<link rel="stylesheet" href="shared.css">
+</head>
+<body>
+<header class="top"><div class="container top-inner">
+  <a class="brand" href="dashboard.html">🌿 Unitech Agri Seeds — Admin</a>
+  <nav class="tabs">
+    <a class="tab" href="dashboard.html">Dashboard</a>
+    <a class="tab" href="products.html">Products</a>
+    <a class="tab active" href="dealers.html">Dealers</a>
+    <a class="tab" href="orders.html">Orders</a>
+    <a class="tab" href="returns.html">Returns</a>
+  </nav>
+  <button id="logout" class="btn btn-ghost btn-sm">Log out</button>
+</div></header>
+
+<main class="container">
+  <h1 class="page-title">Dealers</h1>
+
+  <div class="toolbar">
+    <button class="btn btn-primary" id="add-btn">+ Add dealer</button>
+    <div class="search-input">
+      <input id="search" placeholder="Search dealers…">
+    </div>
+    <span class="hint">Add Dealer creates the login automatically.
+    Use <b>Open</b> → Allocate for more stock.</span>
+  </div>
+
+  <div class="table-wrap">
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Shop</th><th>Dealer</th><th>Phone</th><th>Account ID</th><th>Location</th><th>Status</th><th>Actions</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+    <div class="empty" id="empty" style="display:none">No dealers yet — add the first one.</div>
+  </div>
+
+</main>
+<div class="toast-wrap" id="toasts"></div>
+<div class="scrim" id="scrim"><div class="modal" id="modal"></div></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+  // ---- shared config (identical in every page — docs/backendStack.md §3) ----
+  const SUPABASE_URL      = "https://eotigemxfgszrtrrfdma.supabase.co";   // TODO: your project URL
+  const SUPABASE_ANON_KEY = "sb_publishable_Our1GSi2nUfzrNq6tdE1IA_iv75P5gN";                     // TODO: your anon key (public by design)
+  const LOGIN_DOMAIN      = "@agri.local";       // dealer Account ID -> login email
+  const LOW_STOCK_MAX     = 0;                            // dealer total <= this = low stock
+  const EXCESS_TOTAL      = 1000;                         // dealer total >= this = excess stock
+  const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  const $ = s => document.querySelector(s);
+  const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]);
+  const fmtDate = iso => iso ? new Date(iso).toLocaleString() : "";
+  function toast(msg, ok = true) {
+    const t = document.createElement("div");
+    t.className = "toast" + (ok ? "" : " err");
+    t.textContent = msg;
+    $("#toasts").appendChild(t);
+    requestAnimationFrame(() => t.classList.add("show"));
+    setTimeout(() => { t.classList.remove("show"); setTimeout(() => t.remove(), 300); }, 3000);
+  }
+  function pill(status) { return '<span class="pill pill-' + esc(status) + '">' + esc(status) + "</span>"; }
+  function friendly(err) {
+    const m = String(err && err.message || err || "");
+    if (m.includes("duplicate key") || m.includes("23505") || m.includes("ACCOUNT_EXISTS")) return "That Account ID is already in use.";
+    if (m.includes("INVALID_ACCOUNT_ID")) return "Account ID must contain letters or digits.";
+    if (m.includes("DB_ERROR")) return String(m).slice(0, 140);
+    if (m.includes("INSUFFICIENT_STOCK")) return "Source dealer does not have that much stock.";
+    if (m.includes("VALIDATION_ERROR"))   return "Please check the form — quantity must be positive.";
+    if (m.includes("NOT_PENDING"))        return "This request was already processed.";
+    if (m.includes("RETURN_NOT_PENDING"))  return "Return has already been processed.";
+    if (m.includes("ORDER_NOT_PENDING"))   return "Order has already been processed.";
+    if (m.includes("CONCURRENT_MODIFICATION")) return "Record was modified by someone else. Reload and try again.";
+    if (m.includes("PRODUCT_INACTIVE"))   return "This product is inactive and cannot be used.";
+    if (m.includes("FORBIDDEN"))          return "You are not allowed to do that.";
+    if (m.includes("NOT_FOUND"))          return "This record no longer exists.";
+    return "Something went wrong. Please try again.";
+  }
+  async function getSession() { const { data } = await supabaseClient.auth.getSession(); return data.session || null; }
+  function go(url) { location.href = url; }
+  // "Dealer 001" -> "dealer-001" (docs/backendStack.md §3)
+  function normalizeAccountId(raw) {
+    return String(raw || "").trim().toLowerCase()
+      .replace(/[^a-z0-9-]+/g, "-").replace(/-{2,}/g, "-").replace(/^-+|-+$/g, "");
+  }
+</script>
+<script>
+(async () => {
+  const supabase = supabaseClient;
+  // ---- auth guard (admin only) ----
+  const session = await getSession();
+  if (!session) return go("index.html");
+  if (session.user.app_metadata.role !== "admin") {
+    await supabase.auth.signOut(); return go("index.html");
+  }
+  document.getElementById("logout").addEventListener("click",
+    () => supabase.auth.signOut().then(() => go("index.html")));
+
+  const scrim = document.getElementById("scrim");
+  const modal = document.getElementById("modal");
+  function openModal(html) { modal.innerHTML = html; scrim.classList.add("open"); }
+  function closeModal() { scrim.classList.remove("open"); }
+  scrim.addEventListener("click", e => { if (e.target === scrim) closeModal(); });
+
+  let dealers = [], products = [];
+  const DEALER_FIELDS = [
+    ["shop_name", "Shop name"],
+    ["dealer_name", "Dealer name"],
+    ["phone", "Phone number"],
+    ["village", "Village"],
+    ["mandal", "Mandal"],
+    ["district", "District"],
+    ["account_details", "Account details (banking reference, optional)"],
+    ["account_id", "Account ID (login)"],
+  ];
+
+  async function loadDealers() {
+    const { data } = await supabase.from("dealers")
+      .select("*").is("deleted_at", null).order("created_at", { ascending: false });
+    dealers = data || [];
+    const rows = document.getElementById("rows");
+    const empty = document.getElementById("empty");
+    if (dealers.length === 0) { empty.style.display = "block"; rows.innerHTML = ""; return; }
+    const q = (document.getElementById("search").value || "").trim().toLowerCase();
+    const list = q ? dealers.filter(d =>
+      [d.shop_name, d.dealer_name, d.account_id, d.village, d.district, d.phone]
+        .some(v => (v || "").toLowerCase().includes(q))) : dealers;
+    if (list.length === 0) {
+      rows.innerHTML = '<tr><td colspan="7" class="empty">No dealers match your search.</td></tr>';
+      return;
+    }
+    empty.style.display = "none";
+    rows.innerHTML = list.map(d => `<tr>
+      <td>${esc(d.shop_name || "—")}</td>
+      <td>${esc(d.dealer_name || "—")}</td>
+      <td>${esc(d.phone || "—")}</td>
+      <td>${esc(d.account_id)}</td>
+      <td>${esc([d.village, d.district].filter(Boolean).join(", ") || "—")}</td>
+      <td>${d.is_active ? '<span class="pill pill-active">active</span>' : '<span class="pill pill-muted">inactive</span>'}</td>
+      <td class="row">
+        <button class="btn btn-primary btn-sm" data-open="${d.id}">Open</button>
+        <button class="btn btn-ghost btn-xs" data-edit="${d.id}">Edit</button>
+        <button class="btn btn-ghost btn-xs" data-toggle="${d.id}">${d.is_active ? "Deactivate" : "Activate"}</button>
+        <button class="btn btn-danger btn-xs" data-delete="${d.id}">Delete</button>
+      </td></tr>`).join("");
+
+    rows.querySelectorAll("[data-open]").forEach(b => b.addEventListener("click", () => openDetail(b.dataset.open)));
+    rows.querySelectorAll("[data-edit]").forEach(b => b.addEventListener("click", () =>
+      openDealerModal(dealers.find(x => x.id === b.dataset.edit))));
+    rows.querySelectorAll("[data-toggle]").forEach(b => b.addEventListener("click", async () => {
+      const d = dealers.find(x => x.id === b.dataset.toggle);
+      if (!d.is_active && !confirm("Deactivate this dealer? They will not be able to log in.")) return;
+      const { error } = await supabase.from("dealers").update({ is_active: !d.is_active }).eq("id", d.id);
+      if (error) return toast(friendly(error), false);
+      toast(d.is_active ? "Dealer deactivated." : "Dealer activated.");
+      await loadDealers();
+    }));
+    rows.querySelectorAll("[data-delete]").forEach(b => b.addEventListener("click", async () => {
+      const d = dealers.find(x => x.id === b.dataset.delete);
+      if (!confirm(`Delete "${d.shop_name || d.account_id}"? This removes them from the list. Their login and stock history are preserved.`)) return;
+      const { error } = await supabase.from("dealers").update({ deleted_at: new Date().toISOString(), is_active: false }).eq("id", d.id);
+      if (error) return toast(friendly(error), false);
+      toast("Dealer deleted.");
+      await loadDealers();
+    }));
+  }
+
+  // ---- add / edit dealer modal ----
+  function openDealerModal(d) {
+    const isEdit = !!d;
+    openModal(`
+      <h3>${isEdit ? "Edit dealer" : "Add dealer"}</h3>
+      <form id="d-form">
+        ${DEALER_FIELDS.map(([k, label]) => `
+          <div class="field"><label>${label}</label>
+          <input id="f-${k}" value="${esc(d ? d[k] || "" : "")}" ${k === "account_id" ? "required readonly" : ""}></div>`).join("")}
+        ${isEdit ? "" : `
+        <div class="field"><label>Password (min 10 chars, upper+lower+number)</label>
+        <input id="f-password" type="password" required minlength="10" autocomplete="new-password"></div>
+        <div class="field"><label>Initial stock (optional)</label>
+          <div class="field-row">
+            <select id="is-product">${(products || []).map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join("")}</select>
+            <input id="is-qty" type="number" min="1" step="1" value="1" style="width:90px">
+            <button class="btn btn-ghost btn-sm" type="button" id="is-add">Add</button>
+          </div>
+          <div id="is-list" class="hint" style="margin-top:6px">No initial stock items.</div>
+        </div>`}
+        <p class="hint">Account ID is normalized to lowercase letters, digits and
+        hyphens ("Dealer 001" → "dealer-001"). Login email:
+        <b>&lt;account-id&gt;${esc(LOGIN_DOMAIN)}</b>.</p>
+        <div class="modal-actions">
+          <button class="btn btn-primary" type="submit">${isEdit ? "Save" : "Create dealer + login"}</button>
+          <button class="btn btn-ghost" type="button" id="d-cancel">Cancel</button>
+        </div>
+      </form>`);
+    document.getElementById("d-cancel").addEventListener("click", closeModal);
+
+    const initialStock = new Map();
+    if (!isEdit) {
+      const renderIS = () => {
+        document.getElementById("is-list").innerHTML = initialStock.size === 0
+          ? "No initial stock items."
+          : [...initialStock.entries()].map(([pid, q]) => {
+              const p = products.find(x => x.id === pid);
+              return `${esc(p ? p.name : pid)} × ${q}`;
+            }).join(" · ");
+      };
+      renderIS();
+      document.getElementById("is-add").addEventListener("click", () => {
+        const pid = document.getElementById("is-product").value;
+        const q = parseInt(document.getElementById("is-qty").value, 10);
+        if (!pid) return toast("Add products first (Products tab).", false);
+        if (!Number.isInteger(q) || q <= 0) return toast("Enter a positive whole number.", false);
+        initialStock.set(pid, (initialStock.get(pid) || 0) + q);
+        renderIS();
+      });
+    }
+
+    document.getElementById("d-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const values = {};
+      DEALER_FIELDS.forEach(([k]) => { values[k] = document.getElementById("f-" + k).value.trim(); });
+      values.account_id = normalizeAccountId(values.account_id);
+      if (!values.account_id) return toast("Account ID must contain letters or digits.", false);
+      try {
+        if (isEdit) {
+          const { error } = await supabase.from("dealers").update(values).eq("id", d.id);
+          if (error) throw error;
+          toast("Dealer updated.");
+        } else {
+          const password = document.getElementById("f-password").value;
+          const r = await fetch("/api/create-dealer", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: "Bearer " + session.access_token },
+            body: JSON.stringify({
+              ...values,
+              password,
+              initial_stock: [...initialStock.entries()].map(([product_id, quantity]) => ({ product_id, quantity })),
+            }),
+          });
+          const j = await r.json().catch(() => ({}));
+          if (!r.ok || !j.ok) throw new Error(j.error ? j.error.message : "Request failed");
+          toast("Dealer + login created. They can sign in right away.");
+        }
+        closeModal();
+      } catch (ex) { toast(friendly(ex), false); }
+    });
+  }
+
+  // ---- allocate stock modal (docs/backendStack.md §5.4) ----
+  function openAllocModal(dealerId) {
+    const d = dealers.find(x => x.id === dealerId);
+    const allocItems = new Map();
+    const renderList = () => {
+      const list = document.getElementById("a-list");
+      const submit = document.getElementById("a-submit");
+      if (allocItems.size === 0) { list.textContent = "No items added yet."; submit.disabled = true; return; }
+      list.innerHTML = [...allocItems.entries()].map(([pid, q]) => {
+        const p = products.find(x => x.id === pid);
+        return `<span style="margin-right:12px">${esc(p ? p.name : pid)} &times; ${q}</span>`;
+      }).join("");
+      submit.disabled = false;
+    };
+    openModal(`
+      <h3>Allocate stock to ${esc(d.shop_name || d.account_id)}</h3>
+      <div class="field"><label>Product</label>
+        <select id="a-product">${(products || []).map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join("")}</select></div>
+      <div class="field-row">
+        <div class="field" style="flex:1"><label>Quantity</label>
+          <input id="a-qty" type="number" min="1" step="1" inputmode="numeric" value="1"></div>
+        <button class="btn btn-ghost btn-sm" id="a-add" type="button">+ Add</button>
+      </div>
+      <div id="a-list" class="hint" style="margin-top:10px">No items added yet.</div>
+      <div class="modal-actions">
+        <button class="btn btn-primary" id="a-submit" type="button" disabled>Send stock</button>
+        <button class="btn btn-ghost" type="button" id="a-cancel">Cancel</button>
+      </div>
+      <p class="hint" style="margin-top:8px">Adds to this dealer's inventory atomically and records ALLOCATION movements.</p>
+    `);
+    document.getElementById("a-cancel").addEventListener("click", closeModal);
+    document.getElementById("a-add").addEventListener("click", () => {
+      const pid = document.getElementById("a-product").value;
+      const qty = Number(document.getElementById("a-qty").value);
+      if (!pid) return toast("Add products first (Products tab).", false);
+      if (!Number.isSafeInteger(qty) || qty <= 0) return toast("Enter a positive whole number.", false);
+      allocItems.set(pid, (allocItems.get(pid) || 0) + qty);
+      renderList();
+    });
+    document.getElementById("a-submit").addEventListener("click", async () => {
+      const btn = document.getElementById("a-submit");
+      if (allocItems.size === 0) return;
+      btn.disabled = true;
+      try {
+        const p_items = [...allocItems.entries()].map(([product_id, quantity]) => ({ product_id, quantity }));
+        const { error } = await supabase.rpc("allocate_stock", { p_dealer: dealerId, p_items });
+        if (error) throw error;
+        toast("Stock allocated.");
+        closeModal();
+        await openDetail(dealerId);
+      } catch (ex) { toast(friendly(ex), false); }
+      finally { btn.disabled = false; }
+    });
+  }
+
+  await loadDealers();
+
+  document.getElementById("search").addEventListener("input", loadDealers);
+  document.getElementById("add-btn").addEventListener("click", () => openDealerModal(null));
+
+  // ---- dealer detail: activity popup ----
+  async function openDetail(id) {
+    const d = dealers.find(x => x.id === id);
+    openModal('<div class="card"><div class="skeleton"></div><div class="skeleton"></div></div>');
+
+    const [inv, salesL, returnsL, ordersL, movesL] = await Promise.all([
+      supabase.from("dealer_stock").select("quantity, products(name)")
+        .eq("dealer_id", id).order("quantity", { ascending: false }),
+      supabase.from("sale_transactions").select("created_at, sale_items(quantity, products(name))")
+        .eq("dealer_id", id).order("created_at", { ascending: false }).limit(5),
+      supabase.from("returns").select("status, created_at, return_items(quantity, products(name))")
+        .eq("dealer_id", id).order("created_at", { ascending: false }).limit(5),
+      supabase.from("orders").select("status, created_at, order_items(quantity, products(name))")
+        .eq("dealer_id", id).order("created_at", { ascending: false }).limit(5),
+      supabase.from("stock_movements").select("quantity, movement_type, created_at, products(name)")
+        .eq("dealer_id", id).order("created_at", { ascending: false }).limit(8),
+    ]);
+
+    const table = (head, rows) => rows
+      ? `<div class="table-wrap"><div class="table-scroll"><table><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table></div></div>`
+      : '<div class="empty">Nothing yet.</div>';
+
+    const invData = inv.data || [];
+    const maxQty = Math.max(...invData.map(r => r.quantity), 1);
+    const invChart = invData.length
+      ? '<div class="inv-chart">' + invData.map(r => {
+          const pct = Math.max((r.quantity / maxQty) * 100, r.quantity > 0 ? 4 : 0);
+          const name = esc(r.products ? r.products.name : "—");
+          return `<div class="inv-bar-row">
+            <span class="inv-bar-label" title="${name}">${name}</span>
+            <div class="inv-bar-track"><div class="inv-bar-fill" style="width:${pct}%">
+              ${r.quantity > 0 ? `<span class="inv-bar-val">${r.quantity}</span>` : ""}
+            </div></div>
+            ${r.quantity === 0 ? '<span class="inv-bar-zero">0</span>' : ""}
+          </div>`;
+        }).join("") + '</div>'
+      : '<div class="empty">No stock yet.</div>';
+    const salesRows = (salesL.data || []).map(s =>
+      `<tr><td>${(s.sale_items || []).map(i => `${esc(i.products ? i.products.name : "—")} × ${i.quantity}`).join("<br>")}</td><td>${fmtDate(s.created_at)}</td></tr>`).join("");
+    const retRows = (returnsL.data || []).map(r =>
+      `<tr><td>${(r.return_items || []).map(i => `${esc(i.products ? i.products.name : "—")} × ${i.quantity}`).join("<br>")}</td><td>${pill(r.status)}</td><td>${fmtDate(r.created_at)}</td></tr>`).join("");
+    const ordRows = (ordersL.data || []).map(o =>
+      `<tr><td>${(o.order_items || []).map(i => `${esc(i.products ? i.products.name : "—")} × ${i.quantity}`).join("<br>")}</td><td>${pill(o.status)}</td><td>${fmtDate(o.created_at)}</td></tr>`).join("");
+    const mvRows = (movesL.data || []).map(m => {
+      const isIn = m.quantity > 0;
+      return `<tr><td>${isIn ? "▲ In" : "▼ Out"}</td><td>${esc(m.products ? m.products.name : "—")}</td><td class="num">${isIn ? "+" : ""}${m.quantity}</td><td>${esc(m.movement_type)}</td><td>${fmtDate(m.created_at)}</td></tr>`;
+    }).join("");
+
+    modal.innerHTML = `
+      <h2>${esc(d.shop_name || "Dealer")} — activity</h2>
+      <div class="activity-header">
+        <div class="activity-meta">
+          <b>${esc(d.dealer_name || "")}</b> · ${esc([d.village, d.mandal, d.district].filter(Boolean).join(", ") || "—")}<br>
+          Account ID: ${esc(d.account_id)}
+        </div>
+        <div class="activity-actions">
+          <button class="btn btn-primary btn-sm" id="d-alloc">Allocate Stock</button>
+          <button class="btn btn-ghost btn-sm" id="d-edit">Edit dealer</button>
+        </div>
+      </div>
+      <div class="section-label">Current inventory</div>
+      ${invChart}
+      <div class="section-label">Recent sales</div>
+      ${table('<th>Items</th><th>When</th>', salesRows)}
+      <div class="section-label">Recent returns</div>
+      ${table('<th>Items</th><th>Status</th><th>Submitted</th>', retRows)}
+      <div class="section-label">Recent orders</div>
+      ${table('<th>Items</th><th>Status</th><th>Requested</th>', ordRows)}
+      <div class="section-label">Stock movement</div>
+      ${table('<th>Dir</th><th>Product</th><th class="num">Qty</th><th>Type</th><th>When</th>', mvRows)}
+      <div class="modal-actions" style="margin-top:var(--sp-5)">
+        <button class="btn btn-ghost" id="d-close">Close</button>
+      </div>
+    `;
+
+    document.getElementById("d-close").addEventListener("click", closeModal);
+    document.getElementById("d-edit").addEventListener("click", () => { closeModal(); openDealerModal(d); });
+    document.getElementById("d-alloc").addEventListener("click", () => { closeModal(); openAllocModal(id); });
+  }
+
+  await loadDealers();
+  const { data: prods } = await supabase.from("products").select("id, name").eq("is_active", true).is("deleted_at", null).order("name");
+  products = prods || [];
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,99 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "rewrites": [
+    {
+      "source": "/",
+      "destination": "/public/index.html"
+    },
+    {
+      "source": "/index.html",
+      "destination": "/public/index.html"
+    },
+    {
+      "source": "/about",
+      "destination": "/public/about.html"
+    },
+    {
+      "source": "/about.html",
+      "destination": "/public/about.html"
+    },
+    {
+      "source": "/products",
+      "destination": "/public/products.html"
+    },
+    {
+      "source": "/products.html",
+      "destination": "/public/products.html"
+    },
+    {
+      "source": "/contact",
+      "destination": "/public/contact.html"
+    },
+    {
+      "source": "/contact.html",
+      "destination": "/public/contact.html"
+    }
+  ],
+  "redirects": [
+    {
+      "source": "/docs/:path*",
+      "destination": "/"
+    },
+    {
+      "source": "/supabase/:path*",
+      "destination": "/"
+    },
+    {
+      "source": "/tests/:path*",
+      "destination": "/"
+    },
+    {
+      "source": "/reference/:path*",
+      "destination": "/"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "X-Frame-Options",
+          "value": "DENY"
+        },
+        {
+          "key": "Referrer-Policy",
+          "value": "strict-origin-when-cross-origin"
+        },
+        {
+          "key": "Content-Security-Policy",
+          "value": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data: blob:; connect-src 'self' https://eotigemxfgszrtrrfdma.supabase.co; frame-ancestors 'none'"
+        },
+        {
+          "key": "Strict-Transport-Security",
+          "value": "max-age=63072000; includeSubDomains; preload"
+        },
+        {
+          "key": "Permissions-Policy",
+          "value": "camera=(), microphone=(), geolocation=()"
+        }
+      ]
+    },
+    {
+      "source": "/api/(.*)",
+      "headers": [
+        {
+          "key": "Access-Control-Allow-Methods",
+          "value": "GET, POST, OPTIONS"
+        },
+        {
+          "key": "Access-Control-Allow-Headers",
+          "value": "Content-Type, Authorization, apikey"
+        }
+      ]
+    }
+  ]
+}

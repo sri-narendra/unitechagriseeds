@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Return Requests — Admin Portal</title>
+<link rel="stylesheet" href="shared.css">
+</head>
+<body>
+<header class="top"><div class="container top-inner">
+  <a class="brand" href="dashboard.html">🌿 Unitech Agri Seeds — Admin</a>
+  <nav class="tabs">
+    <a class="tab" href="dashboard.html">Dashboard</a>
+    <a class="tab" href="products.html">Products</a>
+    <a class="tab" href="dealers.html">Dealers</a>
+    <a class="tab" href="orders.html">Orders</a>
+    <a class="tab active" href="returns.html">Returns</a>
+  </nav>
+  <button id="logout" class="btn btn-ghost btn-sm">Log out</button>
+</div></header>
+
+<main class="container">
+  <h1 class="page-title">Return requests</h1>
+  <p class="hint" style="margin-top:-8px;margin-bottom:var(--sp-4)">Accept a return <b>only after the stock
+  physically arrives</b> — accepting reduces the dealer's inventory atomically.</p>
+
+  <div class="toolbar">
+    <div class="search-input">
+      <input id="search" placeholder="Search returns…">
+    </div>
+  </div>
+
+  <div class="table-wrap">
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Submitted</th><th>Dealer</th><th>Items</th><th>Status</th><th>Actions</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+    <div class="empty" id="empty" style="display:none">No return requests yet.</div>
+  </div>
+</main>
+<div class="toast-wrap" id="toasts"></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+  // ---- shared config (identical in every page — docs/backendStack.md §3) ----
+  const SUPABASE_URL      = "https://eotigemxfgszrtrrfdma.supabase.co";   // TODO: your project URL
+  const SUPABASE_ANON_KEY = "sb_publishable_Our1GSi2nUfzrNq6tdE1IA_iv75P5gN";                     // TODO: your anon key (public by design)
+  const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  const $ = s => document.querySelector(s);
+  const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]);
+  const fmtDate = iso => iso ? new Date(iso).toLocaleString() : "";
+  function toast(msg, ok = true) {
+    const t = document.createElement("div");
+    t.className = "toast" + (ok ? "" : " err");
+    t.textContent = msg;
+    $("#toasts").appendChild(t);
+    requestAnimationFrame(() => t.classList.add("show"));
+    setTimeout(() => { t.classList.remove("show"); setTimeout(() => t.remove(), 300); }, 3000);
+  }
+  function pill(status) { return '<span class="pill pill-' + esc(status) + '">' + esc(status) + "</span>"; }
+  function friendly(err) {
+    const m = String(err && err.message || err || "");
+    if (m.includes("NOT_PENDING"))        return "This return was already processed.";
+    if (m.includes("RETURN_NOT_PENDING"))  return "Return has already been processed.";
+    if (m.includes("ORDER_NOT_PENDING"))   return "Order has already been processed.";
+    if (m.includes("CONCURRENT_MODIFICATION")) return "Record was modified by someone else. Reload and try again.";
+    if (m.includes("PRODUCT_INACTIVE"))   return "This product is inactive and cannot be used.";
+    if (m.includes("INSUFFICIENT_STOCK")) return "Dealer no longer holds that much stock — reject or contact them.";
+    if (m.includes("FORBIDDEN"))          return "You are not allowed to do that.";
+    return "Something went wrong. Please try again.";
+  }
+  async function getSession() { const { data } = await supabaseClient.auth.getSession(); return data.session || null; }
+  function go(url) { location.href = url; }
+</script>
+<script>
+(async () => {
+  const supabase = supabaseClient;
+  // ---- auth guard (admin only) ----
+  const session = await getSession();
+  if (!session) return go("index.html");
+  if (session.user.app_metadata.role !== "admin") {
+    await supabase.auth.signOut(); return go("index.html");
+  }
+  document.getElementById("logout").addEventListener("click",
+    () => supabase.auth.signOut().then(() => go("index.html")));
+
+  async function loadReturns() {
+    const { data } = await supabase
+      .from("returns")
+      .select("id, status, created_at, dealers(shop_name), return_items(quantity, products(name))")
+      .order("created_at", { ascending: false })
+      .limit(50);
+    const rows = document.getElementById("rows");
+    const empty = document.getElementById("empty");
+    if (!data || data.length === 0) { empty.style.display = "block"; rows.innerHTML = ""; return; }
+    const sorted = [...data].sort((a, b) =>
+      (a.status === "pending" ? 0 : 1) - (b.status === "pending" ? 0 : 1));
+    const q = (document.getElementById("search").value || "").trim().toLowerCase();
+    const list = q ? sorted.filter(r =>
+      ((r.dealers && r.dealers.shop_name) || "").toLowerCase().includes(q) ||
+      (r.status || "").includes(q) ||
+      (r.return_items || []).some(i => i.products && (i.products.name || "").toLowerCase().includes(q))) : sorted;
+    if (list.length === 0) {
+      rows.innerHTML = '<tr><td colspan="5" class="empty">No returns match your search.</td></tr>';
+      return;
+    }
+    empty.style.display = "none";
+    rows.innerHTML = list.map(r => `<tr>
+      <td>${fmtDate(r.created_at)}</td>
+      <td>${esc(r.dealers ? r.dealers.shop_name : "—")}</td>
+      <td>${(r.return_items || []).map(i => `${esc(i.products ? i.products.name : "—")} × ${i.quantity}`).join("<br>")}</td>
+      <td>${pill(r.status)}</td>
+      <td>${r.status === "pending" ? `
+        <button class="btn btn-primary btn-sm" data-accept="${r.id}">Accept (stock received)</button>
+        <button class="btn btn-danger btn-sm" data-reject="${r.id}">Reject</button>` : "—"}</td>
+    </tr>`).join("");
+
+    rows.querySelectorAll("[data-accept]").forEach(b => b.addEventListener("click", () => act("accept_return", b.dataset.accept, b)));
+    rows.querySelectorAll("[data-reject]").forEach(b => b.addEventListener("click", () => act("reject_return", b.dataset.reject, b)));
+  }
+
+  async function act(fn, returnId, btn) {
+    const label = fn === "accept_return" ? "Return accepted — dealer inventory reduced." : "Return rejected.";
+    btn.disabled = true;
+    try {
+      const { error } = await supabase.rpc(fn, { p_return: returnId });
+      if (error) throw error;
+      toast(label);
+      await loadReturns();
+    } catch (ex) {
+      toast(friendly(ex), false);
+      btn.disabled = false;
+    }
+  }
+
+  document.getElementById("search").addEventListener("input", loadReturns);
+
+  await loadReturns();
+})();
+</script>
+</body>
+</html>

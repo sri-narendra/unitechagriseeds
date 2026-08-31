@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Return Stock — Dealer Portal</title>
+<link rel="stylesheet" href="/dealer/shared.css">
+</head>
+<body class="dealer-portal">
+<header class="top"><div class="container top-inner">
+  <a class="brand" href="stock.html">🌿 Unitech Agri Seeds</a>
+  <nav class="tabs dealer-tabs">
+    <a class="tab" href="stock.html">Stock Stats</a>
+    <a class="tab active" href="return.html">Return</a>
+    <a class="tab" href="sale.html">Sale</a>
+    <a class="tab" href="order.html">Order</a>
+  </nav>
+  <button id="logout" class="btn btn-ghost btn-sm">Log out</button>
+</div></header>
+
+<main class="container">
+  <h1 class="page-title">Return stock</h1>
+  <div class="form-card">
+    <div class="field">
+      <label for="product">Product to send back</label>
+      <select id="product"></select>
+      <p class="hint" id="avail"></p>
+    </div>
+    <div class="field">
+      <label for="qty">Quantity (units)</label>
+      <input id="qty" type="number" min="1" step="1" inputmode="numeric" value="1">
+    </div>
+    <div class="btn-group">
+      <button class="btn btn-secondary" id="add-item" type="button">+ Add item</button>
+    </div>
+    <p class="hint" style="margin-top:var(--sp-2)">The company accepts the return after
+    physically receiving the stock. Your inventory reduces only on acceptance.</p>
+  </div>
+
+  <div class="card" id="return-cart" style="display:none;max-width:640px;margin-top:var(--sp-4)">
+    <h3 class="section-title" style="margin-top:0">Return items</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Product</th><th class="num">Qty</th><th></th></tr></thead>
+        <tbody id="cart-rows"></tbody>
+      </table>
+    </div>
+    <div class="spread" style="margin-top:var(--sp-4)">
+      <button class="btn btn-ghost btn-sm" id="clear-cart" type="button">Clear</button>
+      <button class="btn btn-primary" id="submit" type="button" disabled>Submit return request</button>
+    </div>
+  </div>
+
+  <h2 class="section-title">My returns</h2>
+  <div class="table-wrap">
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Submitted</th><th>Items</th><th>Status</th></tr></thead>
+        <tbody id="return-rows"></tbody>
+      </table>
+    </div>
+    <div class="empty" id="returns-empty" style="display:none">No returns yet.</div>
+  </div>
+</main>
+<div class="toast-wrap" id="toasts"></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+  // ---- shared config (identical in every page — docs/backendStack.md §3) ----
+  const SUPABASE_URL      = "https://eotigemxfgszrtrrfdma.supabase.co";   // TODO: your project URL
+  const SUPABASE_ANON_KEY = "sb_publishable_Our1GSi2nUfzrNq6tdE1IA_iv75P5gN";                     // TODO: your anon key (public by design)
+  const LOGIN_DOMAIN      = "@agri.local";       // dealer Account ID -> login email
+  const LOW_STOCK_MAX     = 0;                            // dealer total <= this = low stock
+  const EXCESS_TOTAL      = 1000;                         // dealer total >= this = excess stock
+  const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  const $ = s => document.querySelector(s);
+  const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]);
+  const fmtDate = iso => iso ? new Date(iso).toLocaleString() : "";
+  function toast(msg, ok = true) {
+    const t = document.createElement("div");
+    t.className = "toast" + (ok ? "" : " err");
+    t.textContent = msg;
+    $("#toasts").appendChild(t);
+    requestAnimationFrame(() => t.classList.add("show"));
+    setTimeout(() => { t.classList.remove("show"); setTimeout(() => t.remove(), 300); }, 3000);
+  }
+  function pill(status) { return '<span class="pill pill-' + esc(status) + '">' + esc(status) + "</span>"; }
+  function friendly(err) {
+    const m = String(err && err.message || err || "");
+    if (m.includes("INSUFFICIENT_STOCK"))    return "Not enough stock for this quantity.";
+    if (m.includes("VALIDATION_ERROR"))      return "Please enter a positive whole number.";
+    if (m.includes("RETURN_NOT_PENDING"))    return "This return was already processed.";
+    if (m.includes("ORDER_NOT_PENDING"))     return "This order was already processed.";
+    if (m.includes("CONCURRENT_MODIFICATION")) return "Another action modified this record. Please refresh.";
+    if (m.includes("PRODUCT_INACTIVE"))      return "This product is no longer active.";
+    if (m.includes("NOT_PENDING"))           return "This request was already processed.";
+    if (m.includes("FORBIDDEN"))             return "You are not allowed to do that.";
+    if (m.includes("NOT_FOUND"))             return "This record no longer exists.";
+    return "Something went wrong. Please try again.";
+  }
+  async function getSession() { const { data } = await supabaseClient.auth.getSession(); return data.session || null; }
+  function go(url) { location.href = url; }
+</script>
+<script>
+(async () => {
+  const supabase = supabaseClient;
+  // ---- auth guard (dealer only) ----
+  const session = await getSession();
+  if (!session) return go("index.html");
+  const dealerId = session.user.app_metadata.dealer_id;
+  const role = session.user.app_metadata.role;
+  if (role !== "dealer" || !dealerId) { await supabase.auth.signOut(); return go("index.html"); }
+  document.getElementById("logout").addEventListener("click",
+    () => supabase.auth.signOut().then(() => go("index.html")));
+
+  let stockRows = [];
+  let returnClientRef = crypto.randomUUID();
+  const returnCart = new Map();   // product_id -> quantity (multi-item — §5.3)
+
+  async function loadStock() {
+    const { data } = await supabase
+      .from("dealer_stock")
+      .select("quantity, product_id, products(name)")
+      .eq("dealer_id", dealerId)
+      .order("updated_at", { ascending: false });
+    stockRows = data || [];
+    const sel = document.getElementById("product");
+    if (stockRows.length === 0) {
+      sel.innerHTML = '<option value="">No stock to return</option>';
+      sel.disabled = true;
+      document.getElementById("add-item").disabled = true;
+      document.getElementById("avail").textContent = "";
+      return;
+    }
+    sel.disabled = false;
+    document.getElementById("add-item").disabled = false;
+    sel.innerHTML = stockRows.map(r =>
+      `<option value="${r.product_id}">${esc(r.products ? r.products.name : "Unknown")} — ${r.quantity} in stock</option>`).join("");
+    updateAvail();
+  }
+
+  function updateAvail() {
+    const row = stockRows.find(r => r.product_id === document.getElementById("product").value);
+    document.getElementById("avail").textContent = row ? `Available: ${row.quantity} units` : "";
+  }
+  document.getElementById("product").addEventListener("change", updateAvail);
+
+  // ---- return cart ----
+  function renderCart() {
+    const card = document.getElementById("return-cart");
+    const rows = document.getElementById("cart-rows");
+    const submit = document.getElementById("submit");
+    if (returnCart.size === 0) {
+      card.style.display = "none"; rows.innerHTML = ""; submit.disabled = true;
+      return;
+    }
+    card.style.display = "block";
+    rows.innerHTML = [...returnCart.entries()].map(([pid, qty]) => {
+      const p = stockRows.find(r => r.product_id === pid);
+      const name = p && p.products ? p.products.name : "Unknown";
+      const max = p ? p.quantity : qty;
+      return `<tr>
+        <td>${esc(name)}</td>
+        <td class="num"><span class="row" style="gap:6px;justify-content:flex-end">
+          <button class="btn btn-ghost btn-sm" data-dec="${pid}" ${qty <= 1 ? "disabled" : ""}>−</button>
+          <b class="num">${qty}</b>
+          <button class="btn btn-ghost btn-sm" data-inc="${pid}" ${qty >= max ? "disabled" : ""}>+</button>
+        </span></td>
+        <td><button class="btn btn-danger btn-sm" data-rm="${pid}">Remove</button></td>
+      </tr>`;
+    }).join("");
+    submit.disabled = false;
+    rows.querySelectorAll("[data-dec]").forEach(b => b.addEventListener("click", () => {
+      const id = b.dataset.dec; returnCart.set(id, returnCart.get(id) - 1); renderCart();
+    }));
+    rows.querySelectorAll("[data-inc]").forEach(b => b.addEventListener("click", () => {
+      const id = b.dataset.inc;
+      const p = stockRows.find(r => r.product_id === id);
+      if (p && returnCart.get(id) < p.quantity) { returnCart.set(id, returnCart.get(id) + 1); renderCart(); }
+    }));
+    rows.querySelectorAll("[data-rm]").forEach(b => b.addEventListener("click", () => {
+      returnCart.delete(b.dataset.rm); renderCart();
+    }));
+  }
+
+  document.getElementById("add-item").addEventListener("click", () => {
+    const pid = document.getElementById("product").value;
+    const qty = Number(document.getElementById("qty").value);
+    if (!pid) return toast("No stock available to return.", false);
+    if (!Number.isSafeInteger(qty) || qty <= 0) return toast("Enter a positive whole number.", false);
+    const p = stockRows.find(r => r.product_id === pid);
+    const newQty = (returnCart.get(pid) || 0) + qty;
+    if (p && newQty > p.quantity) return toast(`Only ${p.quantity} available in stock.`, false);
+    returnCart.set(pid, newQty);
+    renderCart();
+    toast(`${p && p.products ? p.products.name : "Item"} added to return.`);
+  });
+  document.getElementById("clear-cart").addEventListener("click", () => { returnCart.clear(); renderCart(); });
+
+  document.getElementById("submit").addEventListener("click", async () => {
+    const submit = document.getElementById("submit");
+    if (returnCart.size === 0) return;
+    submit.disabled = true;
+    try {
+      const items = [...returnCart.entries()].map(([product_id, quantity]) => ({ product_id, quantity }));
+      const { data, error } = await supabase.rpc("create_return", {
+        p_items: items,
+        p_client_ref: returnClientRef,
+      });
+      if (error) throw error;
+      returnClientRef = crypto.randomUUID();
+      toast(`Return request submitted — ${items.length} item${items.length === 1 ? "" : "s"}.`);
+      returnCart.clear();
+      renderCart();
+      await loadStock();
+      await loadReturns();
+    } catch (ex) {
+      toast(friendly(ex), false);
+    } finally {
+      submit.disabled = returnCart.size === 0;
+    }
+  });
+
+  async function loadReturns() {
+    const { data } = await supabase
+      .from("returns")
+      .select("id, status, created_at, return_items(quantity, products(name))")
+      .eq("dealer_id", dealerId)
+      .order("created_at", { ascending: false })
+      .limit(20);
+    const rows = document.getElementById("return-rows");
+    const empty = document.getElementById("returns-empty");
+    if (!data || data.length === 0) { empty.style.display = "block"; rows.innerHTML = ""; return; }
+    empty.style.display = "none";
+    rows.innerHTML = data.map(r => `<tr>
+      <td>${fmtDate(r.created_at)}</td>
+      <td>${(r.return_items || []).map(i => `${esc(i.products ? i.products.name : "—")} × ${i.quantity}`).join("<br>")}</td>
+      <td>${pill(r.status)}</td>
+    </tr>`).join("");
+  }
+
+  await loadStock();
+  await loadReturns();
+})();
+</script>
+</body>
+</html>

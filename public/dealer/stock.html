@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stock Stats — Dealer Portal</title>
+<link rel="stylesheet" href="/dealer/shared.css">
+</head>
+<body class="dealer-portal">
+<header class="top"><div class="container top-inner">
+  <a class="brand" href="stock.html">🌿 Unitech Agri Seeds</a>
+  <nav class="tabs dealer-tabs">
+    <a class="tab active" href="stock.html">Stock Stats</a>
+    <a class="tab" href="return.html">Return</a>
+    <a class="tab" href="sale.html">Sale</a>
+    <a class="tab" href="order.html">Order</a>
+  </nav>
+  <button id="logout" class="btn btn-ghost btn-sm">Log out</button>
+</div></header>
+
+<main class="container">
+  <h1 class="page-title">Stock Stats <span id="shop"></span></h1>
+
+  <section class="grid" id="cards">
+    <div class="skeleton" style="height:180px"></div>
+    <div class="skeleton" style="height:180px"></div>
+    <div class="skeleton" style="height:180px"></div>
+  </section>
+
+  <h2 class="section-title">Recent movement</h2>
+  <div class="table-wrap">
+    <div class="table-scroll">
+      <table id="moves">
+        <thead><tr><th>Direction</th><th>Product</th><th class="num">Quantity</th><th>Type</th><th>When</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div class="empty" id="moves-empty" style="display:none">No stock movement yet.</div>
+  </div>
+</main>
+<div class="toast-wrap" id="toasts"></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+  // ---- shared config (identical in every page — docs/backendStack.md §3) ----
+  const SUPABASE_URL      = "https://eotigemxfgszrtrrfdma.supabase.co";   // TODO: your project URL
+  const SUPABASE_ANON_KEY = "sb_publishable_Our1GSi2nUfzrNq6tdE1IA_iv75P5gN";                     // TODO: your anon key (public by design)
+  const LOGIN_DOMAIN      = "@agri.local";       // dealer Account ID -> login email
+  const LOW_STOCK_MAX     = 0;                            // dealer total <= this = low stock
+  const EXCESS_TOTAL      = 1000;                         // dealer total >= this = excess stock
+  const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  const $ = s => document.querySelector(s);
+  const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]);
+  const fmtDate = iso => iso ? new Date(iso).toLocaleString() : "";
+  function toast(msg, ok = true) {
+    const t = document.createElement("div");
+    t.className = "toast" + (ok ? "" : " err");
+    t.textContent = msg;
+    $("#toasts").appendChild(t);
+    requestAnimationFrame(() => t.classList.add("show"));
+    setTimeout(() => { t.classList.remove("show"); setTimeout(() => t.remove(), 300); }, 3000);
+  }
+  function go(url) { location.href = url; }
+  async function getSession() { const { data } = await supabaseClient.auth.getSession(); return data.session || null; }
+</script>
+<script>
+(async () => {
+  const supabase = supabaseClient;
+  // ---- auth guard (dealer only) ----
+  const session = await getSession();
+  if (!session) return go("index.html");
+  const dealerId = session.user.app_metadata.dealer_id;
+  const role = session.user.app_metadata.role;
+  if (role !== "dealer" || !dealerId) { await supabase.auth.signOut(); return go("index.html"); }
+  document.getElementById("logout").addEventListener("click",
+    () => supabase.auth.signOut().then(() => go("index.html")));
+
+  // ---- stock cards (reloaded live via Realtime) ----
+  async function loadStock() {
+    const { data: stock, error } = await supabase
+      .from("dealer_stock")
+      .select("quantity, products(name, image_url)")
+      .eq("dealer_id", dealerId)
+      .order("updated_at", { ascending: false });
+
+    const cards = document.getElementById("cards");
+    if (error) {
+      cards.innerHTML = '<div class="empty">Could not load stock. Please refresh.</div>';
+      return;
+    }
+    if (!stock || stock.length === 0) {
+      cards.innerHTML = '<div class="empty">No stock yet — the company will send you stock soon.</div>';
+      return;
+    }
+    const total = stock.reduce((s, r) => s + r.quantity, 0);
+    if (total <= LOW_STOCK_MAX) {
+      document.getElementById("shop").innerHTML =
+        ' <span class="pill pill-low">⚠ low stock</span>';
+    } else {
+      document.getElementById("shop").innerHTML = "";
+    }
+    cards.innerHTML = stock.map(r => {
+      const isLow = r.quantity <= LOW_STOCK_MAX;   // per-product low flag (§4.0)
+      return `
+      <div class="pcard">
+        ${r.products && r.products.image_url && /^https?:\/\//i.test(r.products.image_url)
+          ? `<img src="${esc(r.products.image_url)}" alt="${esc(r.products.name)}">`
+          : `<div class="img-ph">🌾</div>`}
+        <h3>${esc(r.products ? r.products.name : "Unknown product")}</h3>
+        <div class="qty-big num">${r.quantity}</div>
+        <div class="hint">units in stock</div>
+        ${isLow ? '<div style="margin-top:6px"><span class="pill pill-low">● low</span></div>' : ""}
+      </div>`;
+    }).join("");
+  }
+
+  // ---- recent movement feed (reloaded live via Realtime) ----
+  async function loadMoves() {
+    const { data: moves } = await supabase
+      .from("stock_movements")
+      .select("quantity, movement_type, created_at, products(name)")
+      .eq("dealer_id", dealerId)
+      .order("created_at", { ascending: false })
+      .limit(10);
+
+    const tbody = document.querySelector("#moves tbody");
+    const empty = document.getElementById("moves-empty");
+    if (!moves || moves.length === 0) {
+      empty.style.display = "block";
+      tbody.innerHTML = "";
+      return;
+    }
+    empty.style.display = "none";
+    tbody.innerHTML = moves.map(m => {
+      const isIn = m.quantity > 0;
+      return `<tr>
+        <td><span class="${isIn ? "in" : "out"}">${isIn ? "▲ In" : "▼ Out"}</span></td>
+        <td>${esc(m.products ? m.products.name : "—")}</td>
+        <td class="num">${isIn ? "+" : ""}${m.quantity}</td>
+        <td>${esc(m.movement_type)}</td>
+        <td>${fmtDate(m.created_at)}</td>
+      </tr>`;
+    }).join("");
+  }
+
+  await loadStock();
+  await loadMoves();
+
+  // ---- live updates (backendStack.md §11) — filtered by dealer_id ----
+  supabase
+    .channel("dealer-stock-live")
+    .on("postgres_changes",
+        { event: "*", schema: "public", table: "dealer_stock", filter: "dealer_id=eq." + dealerId },
+        () => { loadStock(); loadMoves(); })
+    .subscribe();
+})();
+</script>
+</body>
+</html>

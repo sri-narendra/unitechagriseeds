@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Admin Login — Unitech Agri Seeds</title>
+<link rel="stylesheet" href="/admin/shared.css">
+</head>
+<body>
+<div class="login-wrap">
+  <a class="brand" href="index.html">🌿 Unitech Agri Seeds — Admin</a>
+  <div class="card">
+    <h1 class="section-title">Admin login</h1>
+    <form id="login-form">
+      <div class="field">
+        <label for="email">Email</label>
+        <input id="email" type="email" autocomplete="username" required>
+      </div>
+      <div class="field">
+        <label for="password">Password</label>
+        <input id="password" type="password" autocomplete="current-password" required>
+        <button type="button" id="pw-toggle" class="hint" style="background:none;border:none;padding:4px 0;cursor:pointer;text-decoration:underline">Show password</button>
+      </div>
+      <p class="err-text" id="err"></p>
+      <button class="btn btn-primary" id="submit" type="submit" style="width:100%">Log in</button>
+    </form>
+    <p class="hint" style="margin-top:var(--sp-3)">First time here?
+      <a href="#" id="setup-link">Create the first admin account</a>.</p>
+    <form id="setup-form" style="display:none">
+      <div class="field">
+        <label for="s-email">New admin email</label>
+        <input id="s-email" type="email" required>
+      </div>
+      <div class="field">
+        <label for="s-password">New admin password (min 10 chars, upper+lower+number)</label>
+        <input id="s-password" type="password" required minlength="10">
+      </div>
+      <p class="err-text" id="s-err"></p>
+      <button class="btn btn-secondary" id="s-submit" type="submit">Create admin account</button>
+      <p class="hint">Only works while no admin exists (docs/backendStack.md §5.8).</p>
+    </form>
+  </div>
+</div>
+<div class="toast-wrap" id="toasts"></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+  const SUPABASE_URL      = "https://eotigemxfgszrtrrfdma.supabase.co";
+  const SUPABASE_ANON_KEY = "sb_publishable_Our1GSi2nUfzrNq6tdE1IA_iv75P5gN";
+  const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  function go(url) { location.href = url; }
+</script>
+<script>
+(async () => {
+  const supabase = supabaseClient;
+  // already logged in as admin? go straight to the dashboard
+  const { data } = await supabase.auth.getSession();
+  if (data.session && data.session.user.app_metadata.role === "admin") return go("dashboard.html");
+
+  document.getElementById("pw-toggle").addEventListener("click", () => {
+    const input = document.getElementById("password");
+    input.type = input.type === "password" ? "text" : "password";
+    document.getElementById("pw-toggle").textContent = input.type === "password" ? "Show password" : "Hide password";
+  });
+
+  // ---- first-time admin bootstrap (server refuses once an admin exists) ----
+  document.getElementById("setup-link").addEventListener("click", (e) => {
+    e.preventDefault();
+    const f = document.getElementById("setup-form");
+    f.style.display = f.style.display === "none" ? "block" : "none";
+  });
+  document.getElementById("setup-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const btn = document.getElementById("s-submit");
+    const err = document.getElementById("s-err");
+    err.classList.remove("show");
+    btn.disabled = true;
+    try {
+      const r = await fetch("/api/bootstrap-admin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: document.getElementById("s-email").value.trim(),
+          password: document.getElementById("s-password").value,
+        }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.ok) {
+        err.textContent = j.error && j.error.code === "ADMIN_EXISTS"
+          ? "An admin already exists — just log in."
+          : ((j.error && j.error.message) || "Could not create the admin account.");
+        err.classList.add("show");
+        return;
+      }
+      document.getElementById("email").value = document.getElementById("s-email").value.trim();
+      document.getElementById("setup-form").style.display = "none";
+      err.textContent = "Admin created — now log in below.";
+      err.classList.add("show");
+    } catch (ex) {
+      err.textContent = "Network problem — is the app deployed on Vercel with the SUPABASE_* env vars set?";
+      err.classList.add("show");
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  document.getElementById("login-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const btn = document.getElementById("submit");
+    const err = document.getElementById("err");
+    err.classList.remove("show");
+    btn.disabled = true;
+    try {
+      const email = document.getElementById("email").value.trim();
+      const password = document.getElementById("password").value;
+      const { data: auth, error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) throw error;
+      if (auth.session.user.app_metadata.role !== "admin") {
+        await supabase.auth.signOut();
+        err.textContent = "This is not an admin account.";
+        err.classList.add("show");
+        btn.disabled = false;
+        return;
+      }
+      go("dashboard.html");
+    } catch (ex) {
+      err.textContent = String(ex.message || "").includes("Invalid login credentials")
+        ? "Wrong email or password."
+        : "Could not sign in. Please try again.";
+      err.classList.add("show");
+      btn.disabled = false;
+    }
+  });
+})();
+</script>
+</body>
+</html>

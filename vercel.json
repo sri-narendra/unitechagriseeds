@@ -3,35 +3,35 @@
   "rewrites": [
     {
       "source": "/",
-      "destination": "/public/index.html"
+      "destination": "/index.html"
     },
     {
       "source": "/index.html",
-      "destination": "/public/index.html"
+      "destination": "/index.html"
     },
     {
       "source": "/about",
-      "destination": "/public/about.html"
+      "destination": "/about.html"
     },
     {
       "source": "/about.html",
-      "destination": "/public/about.html"
+      "destination": "/about.html"
     },
     {
       "source": "/products",
-      "destination": "/public/products.html"
+      "destination": "/products.html"
     },
     {
       "source": "/products.html",
-      "destination": "/public/products.html"
+      "destination": "/products.html"
     },
     {
       "source": "/contact",
-      "destination": "/public/contact.html"
+      "destination": "/contact.html"
     },
     {
       "source": "/contact.html",
-      "destination": "/public/contact.html"
+      "destination": "/contact.html"
     }
   ],
   "redirects": [

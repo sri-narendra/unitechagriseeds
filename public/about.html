@@ -1,57 +1,274 @@
-<!DOCTYPE html>
-<html lang="en">
+﻿<!DOCTYPE html>
+<html lang="en" class="no-reveal">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>About — Unitech Agri Seeds</title>
-<style>
-:root{--color-primary:#2E7D32;--color-primary-600:#1B5E20;--color-primary-50:#E8F5E9;--color-warn:#EF6C00;--color-warn-50:#FFF3E0;--color-bg:#F4F7F4;--color-surface:#FFFFFF;--color-border:#D9E2DC;--color-text:#1B2B22;--color-muted:#5B6B61;--color-danger:#C62828;--color-danger-50:#FFEBEE;--color-info:#1565C0;--color-info-50:#E3F2FD;--space-1:4px;--space-2:8px;--space-3:12px;--space-4:16px;--space-5:24px;--space-6:32px;--space-8:48px;--motion-fast:150ms;--motion-base:200ms;--motion-slow:300ms;--radius:10px;--radius-sm:6px}
-*{box-sizing:border-box}
-body{margin:0;background:var(--color-bg);color:var(--color-text);font:400 .875rem/1.5 Inter,-apple-system,"Segoe UI",Roboto,sans-serif}
-.container{max-width:1080px;margin:0 auto;padding:0 var(--space-4)}
-h1{font-size:1.75rem;font-weight:700;line-height:1.2;margin:var(--space-5) 0 var(--space-4)}
-h3{font-size:1rem;font-weight:600;line-height:1.4;margin:0 0 var(--space-2)}
-.card{background:var(--color-surface);border:1px solid var(--color-border);border-radius:8px;padding:var(--space-5);box-shadow:0 1px 2px rgba(0,0,0,.04);margin-bottom:var(--space-4)}
-header.top{background:var(--color-surface);border-bottom:1px solid var(--color-border)}
-.top-inner{display:flex;align-items:center;justify-content:space-between;gap:var(--space-4);padding:var(--space-3) 0}
-.brand{display:flex;align-items:center;gap:var(--space-2);font-weight:700;color:var(--color-primary);text-decoration:none;font-size:1rem}
-.tabs{display:flex;gap:var(--space-2);flex-wrap:wrap}
-.tab{padding:var(--space-2) var(--space-3);text-decoration:none;color:var(--color-muted);font-weight:600;border-radius:var(--radius-sm)}
-.tab:hover{background:var(--color-primary-50)}
-.tab.active{color:var(--color-text);box-shadow:inset 0 -2px 0 var(--color-primary)}
-@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important}}
-</style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>About Us | Unitech Agri Seeds Pvt Ltd, Hyderabad</title>
+  <meta name="description" content="Learn about Unitech Agri Seeds Private Limited - a Hyderabad agri-inputs company founded in 2025, led by Duggempudi Bhaskar Reddy and Rajalekha Adama, providing premium seeds, fertilizers and farm solutions." />
+  <link rel="stylesheet" href="assets/style.css?v=7" />
 </head>
 <body>
-<header class="top"><div class="container top-inner">
-  <a class="brand" href="index.html">🌿 Unitech Agri Seeds</a>
-  <nav class="tabs">
-    <a class="tab" href="index.html">Home</a>
-    <a class="tab active" href="about.html">About</a>
-    <a class="tab" href="products.html">Products</a>
-    <a class="tab" href="contact.html">Contact</a>
-  </nav>
-</div></header>
-<main class="container">
-  <h1>About us</h1>
-  <div class="card">
-    <p>Unitech Agri Seeds is an agriculture company supplying quality seeds and
-    fertilizers to farmers through a trusted network of local dealers. We work
-    closely with village-level shops so that every farmer can find the right
-    product close to home.</p>
+  <div class="preload" id="preload" aria-hidden="true">
+    <div class="p-mark">&#127806;</div>
+    <div style="font-weight:800;letter-spacing:2px;margin-top:8px">UNITED</div>
+    <div class="p-bar"><i></i></div>
   </div>
-  <div class="card">
-    <h3>Our mission</h3>
-    <p>To make dependable agricultural products available in every village we
-    serve — with the right stock, in the right place, at the right time.</p>
-  </div>
-  <div class="card">
-    <h3>Our dealer network</h3>
-    <p>Our dealers are the heart of the business. The company keeps each
-    dealer's shop stocked, balances supply across the network, and supports
-    them every season so farmers always find what they need.</p>
-  </div>
-</main>
+  <a class="skip" href="#main">Skip to content</a>
+  <div class="progress" id="progress"></div>
 
+  <div class="top">
+    <div class="wrap">
+      <div><a href="mailto:info@unitechagriseeds.com"><span class="tick">&#9993;</span> info@unitechagriseeds.com</a>&nbsp;|&nbsp;Hayathnagar, Hyderabad, Telangana 500070</div>
+      <div><span class="tick">&#9742;</span> Call us: <a href="tel:+918309246548">+91 83092 46548</a></div>
+    </div>
+  </div>
+
+  <header class="main">
+    <nav class="nav wrap">
+      <a href="index.html" class="brand">
+        <img src="assets/img/logo.png" alt="Unitech Agri Seeds Private Limited logo" class="logo" onerror="this.style.display='none'" />
+        <span class="lname">Unitech Agri Seeds<small>Private Limited</small></span>
+      </a>
+      <ul class="nav-links" id="links">
+        <li><a href="index.html">Home</a></li>
+        <li><a href="about.html" class="active">About Us</a></li>
+        <li><a href="products.html">Products</a></li>
+        <li><a href="contact.html">Contact</a></li>
+      </ul>
+      <button class="toggle" id="toggle" aria-label="Menu"><span></span><span></span><span></span></button>
+    </nav>
+  </header>
+
+  <section class="pagehead">
+    <div class="wrap">
+      <div class="breadcrumb"><a href="index.html">Home</a><span class="sep">/</span><span>About</span></div>
+      <h1>About <em>Unitech Agri Seeds</em></h1>
+      <p>An agri-inputs partner rooted in Telangana, committed to the success of every farmer.</p>
+      <div class="mini-stats">
+        <div class="m"><div>2025</div><small>Incorporated</small></div>
+        <div class="m"><div>50+</div><small>Varieties</small></div>
+        <div class="m"><div>5</div><small>Categories</small></div>
+        <div class="m"><div>100%</div><small>Genuine</small></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec" id="main">
+    <div class="wrap about-grid" style="position:relative">
+      <span class="watermark tl">UNITED</span>
+      <div class="about-media">
+        <img src="https://images.unsplash.com/photo-1500382017468-9049fed747ef?w=800&q=80" alt="Golden farmland with crops under open sky" loading="lazy" />
+        <div class="float-icon">&#127807;</div>
+        <div class="tag">Est. 17 June 2025<small>RoC-Hyderabad</small></div>
+      </div>
+      <div class="about">
+        <span class="chip">Our Story</span>
+        <h2>From a Single Plot to the Fields of Telangana</h2>
+        <p><strong>UNITECH AGRI SEEDS PRIVATE LIMITED</strong> (CIN: U47737TS2025PTC199947) was incorporated on <strong>17 June 2025</strong> and registered with the Registrar of Companies, Hyderabad.</p>
+        <p>We are a trusted distributor of agricultural seeds, fertilizers, pesticides, farm machinery, equipment and hand tools — supported by agricultural consultancy and crop-production advisory.</p>
+        <div class="feat"><div class="fi">&#127795;</div><div><b>Right Inputs, Right Time</b><p>The correct seed and input delivered exactly when your season needs it.</p></div></div>
+        <div class="feat"><div class="fi acc">&#129309;</div><div><b>Farmer-First Approach</b><p>Every recommendation is built around your field, your soil and your goals.</p></div></div>
+        <div class="feat"><div class="fi">&#128200;</div><div><b>Genuine, Certified Stock</b><p>Verifiable, branded inputs sourced from reputed manufacturers.</p></div></div>
+        <ul class="checklist" style="margin-top:18px">
+          <li><span class="ok">&#10003;</span> Private limited by shares</li>
+          <li><span class="ok">&#10003;</span> Active business status</li>
+          <li><span class="ok">&#10003;</span> Genuine branded inputs</li>
+          <li><span class="ok">&#10003;</span> Farmer-first advisory</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec alt">
+    <div class="wrap" style="position:relative">
+      <span class="watermark br">JOURNEY</span>
+      <div class="head">
+        <div class="numhead"><span class="n">01</span><span class="l">Our Story</span></div>
+        <span class="chip">Our Journey</span>
+        <h2>Milestones on the Path Forward</h2>
+        <p>A young company with a clear direction and ambitious goals.</p>
+      </div>
+      <div class="timeline">
+        <div class="tl acc rv"><span class="dot-emoji">&#128226;</span><span class="year">2025</span><h3>Company Incorporated</h3><p>UNITECH AGRI SEEDS PRIVATE LIMITED is formally registered at RoC-Hyderabad with the vision to serve Telangana's farmers.</p></div>
+        <div class="tl rv"><span class="dot-emoji">&#128200;</span><span class="year">Today</span><h3>Full Input Range</h3><p>Delivering seeds, fertilizers, pesticides, machinery and hand tools from a single trusted retail point.</p></div>
+        <div class="tl acc rv"><span class="dot-emoji">&#127757;</span><span class="year">Growing</span><h3>Dealer &amp; Partner Network</h3><p>Expanding distribution across Telangana to bring genuine inputs closer to every field.</p></div>
+        <div class="tl rv"><span class="dot-emoji">&#127793;</span><span class="year">Ahead</span><h3>Farmer-First Future</h3><p>Scaling advisory and technology-driven crop support to help farmers grow more with less risk.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec alt2">
+    <div class="wrap" style="position:relative">
+      <span class="watermark tl">LEADERS</span>
+      <div class="head">
+        <div class="numhead"><span class="n">02</span><span class="l">Our Team</span></div>
+        <span class="chip gold">Leadership</span>
+        <h2>People Behind the Promise</h2>
+        <p>A hands-on board focused on supply reliability and farmer success.</p>
+      </div>
+      <div class="grid g3">
+        <div class="card rv"><div class="b"><div style="width:52px;height:52px;border-radius:14px;background:var(--teal-tint);color:var(--teal);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:1.2rem;margin-bottom:14px">BR</div><h3>Duggempudi Bhaskar Reddy</h3><p><strong>Managing Director</strong> &middot; DIN 11157370. Contact person for supplier &amp; partner relations since incorporation.</p></div></div>
+        <div class="card rv"><div class="b"><div style="width:52px;height:52px;border-radius:14px;background:var(--orange-tint);color:var(--orange-dark);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:1.2rem;margin-bottom:14px">RA</div><h3>Rajalekha Adama</h3><p><strong>Director</strong> &middot; DIN 11157369. Appointed at incorporation on 17 June 2025.</p></div></div>
+        <div class="card rv"><div class="b"><div style="width:52px;height:52px;border-radius:14px;background:var(--bg-soft);color:var(--teal);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:1.2rem;margin-bottom:14px">&#128188;</div><h3>Registered &amp; Compliant</h3><p>Private limited by shares &middot; Active status &middot; RoC-Hyderabad &middot; Authorized capital &#8377;1,00,000.</p></div></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec" id="values">
+    <div class="wrap">
+      <div class="head">
+        <span class="chip">Our Mission</span>
+        <h2>What We Stand For</h2>
+        <p>To provide high-quality inputs at affordable prices and help farmers grow more with less risk.</p>
+      </div>
+      <div class="promise">
+        <div class="prm rv"><div class="icon">&#129309;</div><h3>Farmer-First</h3><p>Success starts with the farmer — every recommendation is built around your field, your season.</p></div>
+        <div class="prm rv"><div class="icon">&#128996;</div><h3>Assured Quality</h3><p>Genuine, certified inputs from reputed brands, verified batch by batch.</p></div>
+        <div class="prm rv"><div class="icon">&#9201;</div><h3>On-Time Supply</h3><p>We deliver when the season needs it — never late.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec alt">
+    <div class="wrap" style="position:relative">
+      <span class="watermark tl">SERVICES</span>
+      <div class="head">
+        <div class="numhead"><span class="n">03</span><span class="l">What We Offer</span></div>
+        <span class="chip">Our Services</span>
+        <h2>Explore Our Complete Service Range</h2>
+        <p>Tap any item to learn more about how we support your farm.</p>
+      </div>
+      <div class="offers rv" id="offers">
+        <div class="offer">
+          <button class="offer-q"><span class="oq">&#127807;</span><b>Premium Seeds</b><span class="pm">+</span></button>
+          <div class="offer-a"><div>High-germination, disease-resistant hybrid and branded seeds for paddy, maize, cotton, pulses and vegetables — sourced from reputed manufacturers and verified before sale.</div></div>
+        </div>
+        <div class="offer">
+          <button class="offer-q"><span class="oq acc">&#127793;</span><b>Fertilizers</b><span class="pm">+</span></button>
+          <div class="offer-a"><div>Balanced NPK, bio-fertilizers and micronutrients for healthy soil, stronger root growth and better overall yields.</div></div>
+        </div>
+        <div class="offer">
+          <button class="offer-q"><span class="oq">&#128737;</span><b>Crop Protection</b><span class="pm">+</span></button>
+          <div class="offer-a"><div>Recommended pesticides, fungicides and insecticides to protect your crop against pests and disease through every stage.</div></div>
+        </div>
+        <div class="offer">
+          <button class="offer-q"><span class="oq acc">&#128295;</span><b>Machinery &amp; Tools</b><span class="pm">+</span></button>
+          <div class="offer-a"><div>Modern farm machinery, equipment and durable hand tools to make farming faster, easier and more productive.</div></div>
+        </div>
+        <div class="offer">
+          <button class="offer-q"><span class="oq">&#128200;</span><b>Agri Consultation</b><span class="pm">+</span></button>
+          <div class="offer-a"><div>Practical crop planning and farm-management guidance from experienced agri-professionals, season after season.</div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec alt2" id="gallery">
+    <div class="wrap" style="position:relative">
+      <span class="watermark br">IN THE FIELD</span>
+      <div class="head">
+        <div class="numhead"><span class="n">04</span><span class="l">Our World</span></div>
+        <span class="chip">Gallery</span>
+        <h2>From Our Fields to Yours</h2>
+        <p>A glimpse of the agriculture we serve every day across Telangana.</p>
+      </div>
+      <div class="gal">
+        <figure class="polaroid rv" style="--rot:-2deg"><img src="https://images.unsplash.com/photo-1542838132-92c53300491e?w=600&q=80" alt="Green rice field" loading="lazy" /><figcaption>Healthy paddy</figcaption></figure>
+        <figure class="polaroid rv" style="--rot:2.5deg"><img src="https://images.unsplash.com/photo-1523348837708-15d4a09cfac2?w=600&q=80" alt="Farm worker in field" loading="lazy" /><figcaption>Hands on the land</figcaption></figure>
+        <figure class="polaroid rv" style="--rot:-1.5deg"><img src="https://images.unsplash.com/photo-1500937386664-56d1dfef3854?w=600&q=80" alt="Golden crop at sunset" loading="lazy" /><figcaption>Harvest season</figcaption></figure>
+      </div>
+    </div>
+  </section>
+
+  <section class="statband">
+    <div class="wrap">
+      <div class="s"><div class="n"><b data-count="50" data-suffix="+">0</b></div><div class="l">Crop Varieties</div></div>
+      <div class="s"><div class="n"><b data-count="5">0</b></div><div class="l">Categories</div></div>
+      <div class="s"><div class="n"><b data-count="2">0</b></div><div class="l">Core Leaders</div></div>
+      <div class="s"><div class="n">1L</div><div class="l">Auth. Capital</div></div>
+    </div>
+  </section>
+
+  <section class="strip">
+    <div class="wrap"><b>&#9733; Want to grow with us?</b><a href="contact.html">Get in Touch</a></div>
+  </section>
+
+  <footer>
+    <div class="wrap">
+      <div class="fgrid">
+        <div>
+          <div class="f-brand">Unitech Agri Seeds <span>Private Limited</span></div>
+          <p style="font-size:.9rem;line-height:1.7">Empowering Indian agriculture with premium seeds, fertilizers, pesticides and farm machinery since 2025.</p>
+          <div class="fmini">
+            <label style="font-size:.8rem;color:rgba(255,255,255,.6);font-weight:600">Season tips &amp; offers</label>
+            <form id="fminiForm">
+              <input type="email" placeholder="Your email" aria-label="Email" required />
+              <button type="submit">Join</button>
+            </form>
+          </div>
+          <div class="f-social">
+            <a href="#" aria-label="Facebook">&#120143;</a>
+            <a href="#" aria-label="Instagram">&#128247;</a>
+            <a href="#" aria-label="WhatsApp">&#128172;</a>
+            <a href="#" aria-label="YouTube">&#127909;</a>
+          </div>
+        </div>
+        <div><h4>Quick Links</h4><a href="index.html">Home</a><a href="about.html">About Us</a><a href="products.html">Products</a><a href="contact.html">Contact</a></div>
+        <div><h4>Products</h4><a href="products.html">Premium Seeds</a><a href="products.html">Fertilizers</a><a href="products.html">Pesticides</a><a href="products.html">Machinery</a></div>
+        <div>
+          <h4>Reach Us</h4>
+          <a href="tel:+918309246548">&#9742; +91 83092 46548</a>
+          <a href="mailto:info@unitechagriseeds.com">&#9993; info@unitechagriseeds.com</a>
+          <span style="font-size:.85rem;color:rgba(255,255,255,.55);line-height:1.6;display:block;margin-top:6px">PLOT NO 229, 1st Floor, Balaji Nagar, B.N Reddy, Hayathnagar, Telangana - 500070</span>
+        </div>
+      </div>
+      <div class="fbot"><span>&copy; 2025 Unitech Agri Seeds Private Limited. All rights reserved.</span><span>Hyderabad &middot; Telangana &middot; India | <a href="#">CIN U47737TS2025PTC199947</a></span></div>
+    </div>
+  </footer>
+
+  <button class="totop" id="totop" aria-label="Back to top">&#8593;</button>
+  <a class="wa" href="https://wa.me/918309246548" target="_blank" rel="noopener" aria-label="Chat on WhatsApp">&#128172;</a>
+
+  <script>
+    (function(){
+      document.documentElement.classList.remove('no-reveal');
+      document.documentElement.classList.add('js');
+      var t=document.getElementById('toggle'),l=document.getElementById('links');
+      if(t){t.addEventListener('click',function(){t.classList.toggle('open');l.classList.toggle('open');});}
+      if(l){l.querySelectorAll('a').forEach(function(a){a.addEventListener('click',function(){t.classList.remove('open');l.classList.remove('open');});});}
+      var h=document.querySelector('header.main');
+      var tp=document.getElementById('totop');
+      var pr=document.getElementById('progress');
+      var onScroll=function(){
+        if(h)h.classList.toggle('scrolled',window.scrollY>8);
+        if(tp)tp.classList.toggle('show',window.scrollY>520);
+        if(pr){var s=document.documentElement, m=Math.max(0,s.scrollHeight-s.clientHeight); pr.style.width=(m?(s.scrollTop/m*100):0)+'%';}
+      };
+      onScroll();window.addEventListener('scroll',onScroll,{passive:true});
+      if(tp){tp.addEventListener('click',function(){window.scrollTo({top:0,behavior:'smooth'});});}
+
+      if('IntersectionObserver' in window){
+        var io=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting){e.target.classList.add('in');io.unobserve(e.target);}});},{threshold:.12});
+        document.querySelectorAll('.rv').forEach(function(el){io.observe(el);});
+      }else{document.querySelectorAll('.rv').forEach(function(el){el.classList.add('in');});}
+
+      function fillCount(el){
+        var end=parseInt(el.getAttribute('data-count'),10)||0;
+        var suf=el.getAttribute('data-suffix')||'';
+        var dur=1300,start=performance.now();
+        function tick(now){var p=Math.min((now-start)/dur,1);var eased=1-Math.pow(1-p,3);el.textContent=Math.round(end*eased)+suf;if(p<1)requestAnimationFrame(tick);}
+        requestAnimationFrame(tick);
+      }
+      var cio=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting){fillCount(e.target);cio.unobserve(e.target);}});},{threshold:.4});
+      document.querySelectorAll('[data-count]').forEach(function(el){cio.observe(el);});
+
+      var offers=document.getElementById('offers');
+      if(offers){offers.querySelectorAll('.offer-q').forEach(function(q){q.addEventListener('click',function(){var o=q.parentNode,open=o.classList.contains('open');offers.querySelectorAll('.offer').forEach(function(x){x.classList.remove('open');x.querySelector('.offer-a').style.maxHeight=null;});if(!open){o.classList.add('open');o.querySelector('.offer-a').style.maxHeight=o.querySelector('.offer-a').scrollHeight+'px';}});});}
+      var pl=document.getElementById('preload');
+      if(pl){setTimeout(function(){pl.classList.add('done');},700);}
+      var fm=document.getElementById('fminiForm');
+      if(fm){fm.addEventListener('submit',function(e){e.preventDefault();alert('Thanks for joining!');fm.reset();});}
+    })();
+  </script>
 </body>
 </html>

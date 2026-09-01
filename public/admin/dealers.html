@@ -24,6 +24,7 @@
 
   <div class="toolbar">
     <button class="btn btn-primary" id="add-btn">+ Add dealer</button>
+    <button class="btn btn-danger" id="clear-all-btn">Clear All History</button>
     <div class="search-input">
       <input id="search" placeholder="Search dealers…">
     </div>
@@ -311,6 +312,13 @@
 
   document.getElementById("search").addEventListener("input", loadDealers);
   document.getElementById("add-btn").addEventListener("click", () => openDealerModal(null));
+  document.getElementById("clear-all-btn").addEventListener("click", async () => {
+    if (!confirm("Clear ALL dealers' stock history? This removes all inventory records.")) return;
+    const { error } = await supabase.from("dealer_stock").update({ deleted_at: new Date().toISOString() }).is("deleted_at", null);
+    if (error) return toast(friendly(error), false);
+    toast("All stock history cleared.");
+    await loadDealers();
+  });
 
   // ---- dealer detail: activity popup ----
   async function openDetail(id) {
@@ -370,6 +378,7 @@
         <div class="activity-actions">
           <button class="btn btn-primary btn-sm" id="d-alloc">Allocate Stock</button>
           <button class="btn btn-ghost btn-sm" id="d-edit">Edit dealer</button>
+          <button class="btn btn-danger btn-sm" id="d-clear">Clear History</button>
         </div>
       </div>
       <div class="section-label">Current inventory</div>
@@ -390,6 +399,13 @@
     document.getElementById("d-close").addEventListener("click", closeModal);
     document.getElementById("d-edit").addEventListener("click", () => { closeModal(); openDealerModal(d); });
     document.getElementById("d-alloc").addEventListener("click", () => { closeModal(); openAllocModal(id); });
+    document.getElementById("d-clear").addEventListener("click", async () => {
+      if (!confirm(`Clear all stock history for "${d.shop_name || d.account_id}"? This removes their inventory records.`)) return;
+      const { error } = await supabase.from("dealer_stock").update({ deleted_at: new Date().toISOString() }).eq("dealer_id", id).is("deleted_at", null);
+      if (error) return toast(friendly(error), false);
+      toast("Stock history cleared.");
+      await openDetail(id);
+    });
   }
 
   await loadDealers();

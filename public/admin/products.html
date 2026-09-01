@@ -62,8 +62,11 @@
 
   <div class="spread" style="margin-top:var(--sp-6);margin-bottom:var(--sp-4)">
     <h2 class="section-title" style="margin:0">All products</h2>
-    <div class="search-input">
-      <input id="search" placeholder="Search products…">
+    <div class="row" style="gap:var(--sp-3);align-items:center">
+      <button class="btn btn-danger btn-sm" id="clear-all-btn">Clear All History</button>
+      <div class="search-input">
+        <input id="search" placeholder="Search products…">
+      </div>
     </div>
   </div>
   <div class="table-wrap">
@@ -248,9 +251,17 @@
       ${rows ? `<div class="table-wrap"><div class="table-scroll"><table><thead><tr><th>Dealer</th><th>Village</th><th class="num">Units</th></tr></thead><tbody>${rows}</tbody></table></div></div>`
              : '<p class="hint">No dealer holds this product yet.</p>'}
       <div class="modal-actions">
+        <button class="btn btn-danger btn-sm" id="h-clear">Clear History</button>
         <button class="btn btn-ghost" id="h-close">Close</button>
       </div>`);
     document.getElementById("h-close").addEventListener("click", closeModal);
+    document.getElementById("h-clear").addEventListener("click", async () => {
+      if (!confirm(`Clear all stock history for "${p ? p.name : "this product"}"? This removes all inventory records.`)) return;
+      const { error } = await supabase.from("dealer_stock").update({ deleted_at: new Date().toISOString() }).eq("product_id", id).is("deleted_at", null);
+      if (error) return toast(friendly(error), false);
+      toast("Stock history cleared.");
+      await openHolders(id);
+    });
   }
 
   // ---- deactivate / activate ----
@@ -287,6 +298,14 @@
   }
 
   document.getElementById("search").addEventListener("input", loadProducts);
+
+  document.getElementById("clear-all-btn").addEventListener("click", async () => {
+    if (!confirm("Clear ALL product stock history? This removes all inventory records.")) return;
+    const { error } = await supabase.from("dealer_stock").update({ deleted_at: new Date().toISOString() }).is("deleted_at", null);
+    if (error) return toast(friendly(error), false);
+    toast("All stock history cleared.");
+    await loadProducts();
+  });
 
   // ponytail: charts inline here so supabase is in scope
   async function loadCharts() {

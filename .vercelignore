@@ -9,3 +9,5 @@ migrations/
 .playwright-mcp/
 vercel.json
 *.apk
+server.log
+server-error.log

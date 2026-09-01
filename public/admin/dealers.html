@@ -146,6 +146,7 @@
       <td class="row">
         <button class="btn btn-primary btn-sm" data-open="${d.id}">Open</button>
         <button class="btn btn-ghost btn-xs" data-edit="${d.id}">Edit</button>
+        <button class="btn btn-ghost btn-xs" data-pw="${d.id}">Reset Password</button>
         <button class="btn btn-ghost btn-xs" data-toggle="${d.id}">${d.is_active ? "Deactivate" : "Activate"}</button>
         <button class="btn btn-danger btn-xs" data-delete="${d.id}">Delete</button>
       </td></tr>`).join("");
@@ -169,6 +170,7 @@
       toast("Dealer deleted.");
       await loadDealers();
     }));
+    rows.querySelectorAll("[data-pw]").forEach(b => b.addEventListener("click", () => openResetPwModal(b.dataset.pw)));
   }
 
   // ---- add / edit dealer modal ----
@@ -250,6 +252,41 @@
         }
         closeModal();
       } catch (ex) { toast(friendly(ex), false); }
+    });
+  }
+
+  // ---- allocate stock modal (docs/backendStack.md §5.4) ----
+  function openResetPwModal(dealerId) {
+    const d = dealers.find(x => x.id === dealerId);
+    openModal(`
+      <h3>Reset password — ${esc(d.shop_name || d.account_id)}</h3>
+      <form id="pw-form">
+        <div class="field"><label>New password (min 10 chars, upper+lower+number)</label>
+        <input id="f-new-pw" type="password" required minlength="10" autocomplete="new-password"></div>
+        <p class="hint">Dealer will need to use this new password on next login.</p>
+        <div class="modal-actions">
+          <button class="btn btn-primary" type="submit">Update password</button>
+          <button class="btn btn-ghost" type="button" id="pw-cancel">Cancel</button>
+        </div>
+      </form>`);
+    document.getElementById("pw-cancel").addEventListener("click", closeModal);
+    document.getElementById("pw-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const pw = document.getElementById("f-new-pw").value;
+      const btn = e.target.querySelector("[type=submit]");
+      btn.disabled = true;
+      try {
+        const r = await fetch("/api/reset-dealer-password", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: "Bearer " + session.access_token },
+          body: JSON.stringify({ user_id: dealerId, password: pw }),
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok || !j.ok) throw new Error(j.error ? j.error.message : "Request failed");
+        toast("Password updated.");
+        closeModal();
+      } catch (ex) { toast(friendly(ex), false); }
+      finally { btn.disabled = false; }
     });
   }
 

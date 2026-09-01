@@ -65,12 +65,14 @@ const server = createServer(async (req, res) => {
   const apiHandler = API_ROUTES[pathname];
   if (apiHandler) {
     try {
-      // Parse JSON body for POST requests
-      if (req.method === 'POST') {
+      // Parse JSON body for POST requests (handle both fresh and pre-consumed streams)
+      if (req.method === 'POST' && !req.body) {
         const chunks = [];
         for await (const chunk of req) chunks.push(chunk);
         const raw = Buffer.concat(chunks).toString();
-        try { req.body = JSON.parse(raw); } catch { req.body = raw; }
+        try { req.body = JSON.parse(raw); } catch { req.body = raw || {}; }
+      } else if (req.method === 'POST' && typeof req.body === 'string') {
+        try { req.body = JSON.parse(req.body); } catch {}
       }
       await apiHandler(req, wrappedRes);
     } catch (e) {

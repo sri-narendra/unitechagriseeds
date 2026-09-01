@@ -8,14 +8,7 @@
   <link rel="stylesheet" href="assets/style.css?v=7" />
 </head>
 <body>
-  <div class="preload" id="preload" aria-hidden="true">
-    <div class="p-mark">&#127806;</div>
-    <div style="font-weight:800;letter-spacing:2px;margin-top:8px">UNITED</div>
-    <div class="p-bar"><i></i></div>
-  </div>
   <a class="skip" href="#main">Skip to content</a>
-  <div class="progress" id="progress"></div>
-
   <div class="top">
     <div class="wrap">
       <div><a href="mailto:info@unitechagriseeds.com"><span class="tick">&#9993;</span> info@unitechagriseeds.com</a>&nbsp;|&nbsp;Hayathnagar, Hyderabad, Telangana 500070</div>
@@ -290,11 +283,9 @@
       if(l){l.querySelectorAll('a').forEach(function(a){a.addEventListener('click',function(){t.classList.remove('open');l.classList.remove('open');});});}
       var h=document.querySelector('header.main');
       var tp=document.getElementById('totop');
-      var pr=document.getElementById('progress');
       var onScroll=function(){
         if(h)h.classList.toggle('scrolled',window.scrollY>8);
         if(tp)tp.classList.toggle('show',window.scrollY>520);
-        if(pr){var s=document.documentElement, m=Math.max(0,s.scrollHeight-s.clientHeight); pr.style.width=(m?(s.scrollTop/m*100):0)+'%';}
       };
       onScroll();window.addEventListener('scroll',onScroll,{passive:true});
       if(tp){tp.addEventListener('click',function(){window.scrollTo({top:0,behavior:'smooth'});});}
@@ -310,8 +301,7 @@
         var f=b.getAttribute('data-f');
         cat.querySelectorAll('.card').forEach(function(c){c.style.display=(f==='all'||c.getAttribute('data-cat')===f)?'':'none';});
       });});}
-      var pl=document.getElementById('preload');
-      if(pl){setTimeout(function(){pl.classList.add('done');},700);}
+
 
       /* Quick-view modal */
       var qvb=document.getElementById('qvback'),qvi=document.getElementById('qvimg'),qvt=document.getElementById('qvtitle'),qvd=document.getElementById('qvdesc');

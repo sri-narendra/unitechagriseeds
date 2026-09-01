@@ -8,14 +8,7 @@
   <link rel="stylesheet" href="assets/style.css?v=7" />
 </head>
 <body>
-  <div class="preload" id="preload" aria-hidden="true">
-    <div class="p-mark">&#127806;</div>
-    <div style="font-weight:800;letter-spacing:2px;margin-top:8px">UNITED</div>
-    <div class="p-bar"><i></i></div>
-  </div>
   <a class="skip" href="#main">Skip to content</a>
-  <div class="progress" id="progress"></div>
-
   <div class="top">
     <div class="wrap">
       <div><a href="mailto:info@unitechagriseeds.com"><span class="tick">&#9993;</span> info@unitechagriseeds.com</a>&nbsp;|&nbsp;Hayathnagar, Hyderabad, Telangana 500070</div>
@@ -238,11 +231,9 @@
       if(l){l.querySelectorAll('a').forEach(function(a){a.addEventListener('click',function(){t.classList.remove('open');l.classList.remove('open');});});}
       var h=document.querySelector('header.main');
       var tp=document.getElementById('totop');
-      var pr=document.getElementById('progress');
       var onScroll=function(){
         if(h)h.classList.toggle('scrolled',window.scrollY>8);
         if(tp)tp.classList.toggle('show',window.scrollY>520);
-        if(pr){var s=document.documentElement, m=Math.max(0,s.scrollHeight-s.clientHeight); pr.style.width=(m?(s.scrollTop/m*100):0)+'%';}
       };
       onScroll();window.addEventListener('scroll',onScroll,{passive:true});
       if(tp){tp.addEventListener('click',function(){window.scrollTo({top:0,behavior:'smooth'});});}
@@ -264,8 +255,7 @@
 
       var offers=document.getElementById('offers');
       if(offers){offers.querySelectorAll('.offer-q').forEach(function(q){q.addEventListener('click',function(){var o=q.parentNode,open=o.classList.contains('open');offers.querySelectorAll('.offer').forEach(function(x){x.classList.remove('open');x.querySelector('.offer-a').style.maxHeight=null;});if(!open){o.classList.add('open');o.querySelector('.offer-a').style.maxHeight=o.querySelector('.offer-a').scrollHeight+'px';}});});}
-      var pl=document.getElementById('preload');
-      if(pl){setTimeout(function(){pl.classList.add('done');},700);}
+
       var fm=document.getElementById('fminiForm');
       if(fm){fm.addEventListener('submit',function(e){e.preventDefault();alert('Thanks for joining!');fm.reset();});}
     })();

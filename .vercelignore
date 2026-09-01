@@ -1,0 +1,11 @@
+apkmaker/
+androidapp/
+node_modules/
+.git/
+docs/
+tests/
+supabase/
+migrations/
+.playwright-mcp/
+vercel.json
+*.apk

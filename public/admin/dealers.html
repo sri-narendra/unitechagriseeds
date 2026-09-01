@@ -414,6 +414,7 @@
         </div>
         <div class="activity-actions">
           <button class="btn btn-primary btn-sm" id="d-alloc">Allocate Stock</button>
+          <button class="btn btn-ghost btn-sm" id="d-reset-pw">Reset Password</button>
           <button class="btn btn-ghost btn-sm" id="d-edit">Edit dealer</button>
           <button class="btn btn-danger btn-sm" id="d-clear">Clear History</button>
         </div>
@@ -435,6 +436,7 @@
 
     document.getElementById("d-close").addEventListener("click", closeModal);
     document.getElementById("d-edit").addEventListener("click", () => { closeModal(); openDealerModal(d); });
+    document.getElementById("d-reset-pw").addEventListener("click", () => { closeModal(); openResetPwModal(id); });
     document.getElementById("d-alloc").addEventListener("click", () => { closeModal(); openAllocModal(id); });
     document.getElementById("d-clear").addEventListener("click", async () => {
       if (!confirm(`Clear all stock history for "${d.shop_name || d.account_id}"? This removes their inventory records.`)) return;

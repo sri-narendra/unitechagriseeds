@@ -469,7 +469,7 @@
       }
 
       var nf=document.getElementById('newsForm');
-      if(nf){nf.addEventListener('submit',function(e){e.preventDefault();alert('Thank you for subscribing! Stay tuned for season tips.');nf.reset();});}
+      if(nf){nf.addEventListener('submit',function(e){e.preventDefault();var em=nf.querySelector('input').value.trim();if(em){window.open('mailto:info@unitechagriseeds.com?subject=Newsletter%20Subscription&body=Hello%2C%0A%0AI%20would%20like%20to%20subscribe%20to%20the%20newsletter.%0A%0AEmail%3A%20'+encodeURIComponent(em),'_blank');}nf.reset();});}
 
       var pl=document.getElementById('preload');
       if(pl){setTimeout(function(){pl.classList.add('done');},800);}
@@ -478,7 +478,7 @@
         if(rp&&pr)rp.classList.toggle('show',parseFloat(pr.style.width||'0')>12);
       },{passive:true});
       var fm=document.getElementById('fminiForm');
-      if(fm){fm.addEventListener('submit',function(e){e.preventDefault();alert('Thanks for joining! Season tips are on the way.');fm.reset();});}
+      if(fm){fm.addEventListener('submit',function(e){e.preventDefault();var em=fm.querySelector('input').value.trim();if(em){window.open('https://wa.me/918309246548?text='+encodeURIComponent('Hi, I would like to join the newsletter. My email: '+em),'_blank');}fm.reset();});}
     })();
   </script>
 </body>

@@ -3,8 +3,10 @@ import { readFileSync } from 'fs';
 import { join, extname } from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
+import { createRequire } from 'module';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const require = createRequire(import.meta.url);
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -20,11 +22,32 @@ const MIME = {
   '.apk': 'application/vnd.android.package-archive',
 };
 
-// Load all API handlers
-const healthHandler = (await import('./api/health.js')).default;
-const createDealerHandler = (await import('./api/create-dealer.js')).default;
-const resetPwHandler = (await import('./api/reset-dealer-password.js')).default;
-const bootstrapHandler = (await import('./api/bootstrap-admin.js')).default;
+// Wrap raw http.ServerResponse to provide Express-like .status().json() methods
+function wrapRes(res) {
+  const wrapped = Object.create(res);
+  wrapped.status = function (code) {
+    res.statusCode = code;
+    return wrapped;
+  };
+  wrapped.json = function (data) {
+    const body = JSON.stringify(data);
+    if (!res.headersSent) {
+      res.setHeader('Content-Type', 'application/json');
+      res.end(body);
+    }
+    return wrapped;
+  };
+  wrapped.setHeader = function (name, value) {
+    if (!res.headersSent) res.setHeader(name, value);
+    return wrapped;
+  };
+  return wrapped;
+}
+
+const healthHandler = require('./api/health.js');
+const createDealerHandler = require('./api/create-dealer.js');
+const resetPwHandler = require('./api/reset-dealer-password.js');
+const bootstrapHandler = require('./api/bootstrap-admin.js');
 
 const API_ROUTES = {
   '/api/health': healthHandler,
@@ -34,16 +57,26 @@ const API_ROUTES = {
 };
 
 const server = createServer(async (req, res) => {
+  const wrappedRes = wrapRes(res);
   const url = new URL(req.url, 'http://localhost');
   let pathname = url.pathname;
 
   // API routing
   const apiHandler = API_ROUTES[pathname];
   if (apiHandler) {
-    try { await apiHandler(req, res); }
-    catch (e) {
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: false, error: { code: 'INTERNAL', message: 'Server error' } }));
+    try {
+      // Parse JSON body for POST requests
+      if (req.method === 'POST') {
+        const chunks = [];
+        for await (const chunk of req) chunks.push(chunk);
+        const raw = Buffer.concat(chunks).toString();
+        try { req.body = JSON.parse(raw); } catch { req.body = raw; }
+      }
+      await apiHandler(req, wrappedRes);
+    } catch (e) {
+      if (!res.headersSent) {
+        wrappedRes.status(500).json({ ok: false, error: { code: 'INTERNAL', message: String(e.message || e) } });
+      }
     }
     return;
   }

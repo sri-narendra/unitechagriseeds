@@ -1,11 +1,5 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "functions": {
-    "api/health.js": { "runtime": "@vercel/node" },
-    "api/create-dealer.js": { "runtime": "@vercel/node" },
-    "api/reset-dealer-password.js": { "runtime": "@vercel/node" },
-    "api/bootstrap-admin.js": { "runtime": "@vercel/node" }
-  },
   "rewrites": [
     { "source": "/", "destination": "/public/index.html" },
     { "source": "/index.html", "destination": "/public/index.html" },

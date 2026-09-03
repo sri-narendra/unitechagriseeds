@@ -181,7 +181,7 @@
       <form id="d-form">
         ${DEALER_FIELDS.map(([k, label]) => `
           <div class="field"><label>${label}</label>
-          <input id="f-${k}" value="${esc(d ? d[k] || "" : "")}" ${k === "account_id" ? "required readonly" : ""}></div>`).join("")}
+          <input id="f-${k}" value="${esc(d ? d[k] || "" : "")}" ${k === "account_id" ? "required" : ""}></div>`).join("")}
         ${isEdit ? "" : `
         <div class="field"><label>Password (min 10 chars, upper+lower+number)</label>
         <input id="f-password" type="password" required minlength="10" autocomplete="new-password"></div>

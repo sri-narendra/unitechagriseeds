@@ -75,7 +75,11 @@
         <label>Items to move</label>
         <div class="field-row">
           <select id="r-product"></select>
-          <input id="r-qty" type="number" min="1" step="1" inputmode="numeric" value="1" style="width:90px">
+          <input id="r-qty" type="number" min="1" step="1" inputmode="numeric" value="1" style="width:80px">
+          <select id="r-unit" style="width:90px">
+            <option value="packet">Packets</option>
+            <option value="bag">Bags</option>
+          </select>
           <button class="btn btn-ghost btn-sm" id="r-add" type="button">+ Add</button>
         </div>
         <div id="r-list" class="hint" style="margin-top:8px">No items added yet.</div>
@@ -160,14 +164,17 @@
   async function loadDealerWise() {
     const { data } = await supabase
       .from("dealer_stock")
-      .select("quantity, dealer_id, dealers(shop_name, village)");
+      .select("quantity, dealer_id, dealers(shop_name, village), products(packets_per_bag)");
     const map = new Map();
     (data || []).forEach(r => {
       const cur = map.get(r.dealer_id) || {
-        total: 0, shop: r.dealers ? r.dealers.shop_name : "Unknown",
+        totalPackets: 0, totalBags: 0, shop: r.dealers ? r.dealers.shop_name : "Unknown",
         village: r.dealers ? r.dealers.village : "",
       };
-      cur.total += r.quantity;
+      const qty = r.quantity;
+      const ppb = r.products?.packets_per_bag;
+      cur.totalPackets += qty;
+      if (ppb && ppb > 0) cur.totalBags += qty / ppb;
       map.set(r.dealer_id, cur);
     });
     const rows = document.getElementById("dw-rows");
@@ -175,11 +182,11 @@
     if (map.size === 0) { empty.style.display = "block"; rows.innerHTML = ""; return; }
     empty.style.display = "none";
     rows.innerHTML = [...map.entries()].map(([, d]) => {
-      const status = d.total <= LOW_STOCK_MAX ? '<span class="pill pill-low">⚠ low</span>'
-        : d.total >= EXCESS_TOTAL ? '<span class="pill pill-excess">excess</span>'
+      const status = d.totalPackets <= LOW_STOCK_MAX ? '<span class="pill pill-low">⚠ low</span>'
+        : d.totalPackets >= EXCESS_TOTAL ? '<span class="pill pill-excess">excess</span>'
         : '<span class="pill pill-muted">ok</span>';
       return `<tr><td>${esc(d.shop)}</td><td>${esc(d.village || "—")}</td>
-        <td class="num">${d.total}</td><td>${status}</td></tr>`;
+        <td class="num">${d.totalPackets} pkt (${d.totalBags.toFixed(2)} bags)</td><td>${status}</td></tr>`;
     }).join("");
   }
 
@@ -189,27 +196,41 @@
   async function loadRedistOptions() {
     const [{ data: dealers }, { data: products }] = await Promise.all([
       supabase.from("dealers").select("id, shop_name").eq("is_active", true).is("deleted_at", null).order("shop_name"),
-      supabase.from("products").select("id, name").eq("is_active", true).is("deleted_at", null).order("name"),
+      supabase.from("products").select("id, name, packets_per_bag").eq("is_active", true).is("deleted_at", null).order("name"),
     ]);
     redistProducts = products || [];
     const opt = d => `<option value="${d.id}">${esc(d.shop_name || d.name)}</option>`;
     const dOpts = (dealers || []).map(opt).join("");
-    const pOpts = (products || []).map(opt).join("");
+    const pOpts = (products || []).map(p => `<option value="${p.id}" data-ppb="${p.packets_per_bag || ''}">${esc(p.name)}</option>`).join("");
     document.getElementById("from-d").innerHTML = dOpts;
     document.getElementById("to-d").innerHTML = dOpts;
     document.getElementById("r-product").innerHTML = pOpts;
+  // Disable "Bag" option when product has no packets_per_bag
+  const rProdSel = document.getElementById("r-product");
+  const rUnitSel = document.getElementById("r-unit");
+  function updateRedistUnit() {
+    const pid = rProdSel.value;
+    const p = redistProducts.find(x => x.id === pid);
+    const ppb = p?.packets_per_bag;
+    const bagOpt = rUnitSel.querySelector('option[value="bag"]');
+    if (bagOpt) bagOpt.disabled = !ppb;
   }
+  rProdSel.addEventListener("change", updateRedistUnit);
+  updateRedistUnit(); // initial
+}
 
   // ---- redistribute: multi-item builder ----
-  const redistItems = new Map();   // product_id -> quantity
+  const redistItems = new Map();   // product_id -> {qty, unit}
 
   function renderRedistItems() {
     const list = document.getElementById("r-list");
     const submit = document.getElementById("r-submit");
     if (redistItems.size === 0) { list.textContent = "No items added yet."; submit.disabled = true; return; }
-    list.innerHTML = [...redistItems.entries()].map(([pid, qty]) => {
+    list.innerHTML = [...redistItems.entries()].map(([pid, item]) => {
       const p = redistProducts.find(x => x.id === pid);
-      return `${esc(p ? p.name : pid)} × ${qty}`;
+      const ppb = p?.packets_per_bag;
+      const bags = ppb && ppb > 0 ? (item.qty / ppb).toFixed(2) : null;
+      return `${esc(p ? p.name : pid)} × ${item.qty} pkt${bags ? ` (${bags} bags)` : ''} [${item.unit}]`;
     }).join(" · ");
     submit.disabled = false;
   }
@@ -217,9 +238,17 @@
   document.getElementById("r-add").addEventListener("click", () => {
     const pid = document.getElementById("r-product").value;
     const qty = Number(document.getElementById("r-qty").value);
+    const unit = document.getElementById("r-unit").value;
     if (!pid) return toast("Choose a product first.", false);
     if (!Number.isSafeInteger(qty) || qty <= 0) return toast("Enter a positive whole number.", false);
-    redistItems.set(pid, (redistItems.get(pid) || 0) + qty);
+    const p = redistProducts.find(x => x.id === pid);
+    const ppb = p?.packets_per_bag;
+    if (unit === 'bag' && !ppb) return toast("This product doesn't have packets per bag configured.", false);
+    const packetsToAdd = unit === 'bag' && ppb ? qty * ppb : qty;
+    const existing = redistItems.get(pid);
+    const currentQty = existing ? existing.qty : 0;
+    const newQty = currentQty + packetsToAdd;
+    redistItems.set(pid, { qty: newQty, unit });
     renderRedistItems();
   });
 
@@ -232,13 +261,13 @@
     if (redistItems.size === 0) return toast("Add at least one item to move.", false);
     btn.disabled = true;
     try {
-      const p_items = [...redistItems.entries()].map(([product_id, quantity]) => ({ product_id, quantity }));
-      const { error } = await supabase.rpc("redistribute_stock", {
+      const p_items = [...redistItems.entries()].map(([product_id, item]) => ({ product_id, quantity: item.qty, unit: item.unit }));
+      const { data, error } = await supabase.rpc("redistribute_stock", {
         p_from_dealer, p_to_dealer, p_items,
       });
       if (error) throw error;
-      const total = p_items.reduce((s, i) => s + i.quantity, 0);
-      toast(`Moved ${total} units (${p_items.length} item${p_items.length === 1 ? "" : "s"}).`);
+      const totalPackets = p_items.reduce((s, i) => s + i.qty, 0);
+      toast(`Moved ${totalPackets} packets (${p_items.length} item${p_items.length === 1 ? "" : "s"}).`);
       redistItems.clear();
       renderRedistItems();
       await loadDealerWise();
@@ -254,7 +283,7 @@
   async function loadMovement() {
     const { data } = await supabase
       .from("stock_movements")
-      .select("quantity, movement_type, created_at, dealers(shop_name), products(name)")
+      .select("quantity, movement_type, created_at, dealers(shop_name), products(name, packets_per_bag)")
       .order("created_at", { ascending: false })
       .limit(12);
     const rows = document.getElementById("mv-rows");
@@ -263,11 +292,14 @@
     empty.style.display = "none";
     rows.innerHTML = data.map(m => {
       const isIn = m.quantity > 0;
+      const qty = Math.abs(m.quantity);
+      const ppb = m.products?.packets_per_bag;
+      const bags = ppb && ppb > 0 ? (qty / ppb).toFixed(2) : null;
       return `<tr>
         <td>${fmtDate(m.created_at)}</td>
         <td>${esc(m.dealers ? m.dealers.shop_name : "—")}</td>
         <td>${esc(m.products ? m.products.name : "—")}</td>
-        <td class="num"><span class="${isIn ? "in" : "out"}">${isIn ? "+" : ""}${m.quantity}</span></td>
+        <td class="num"><span class="${isIn ? "in" : "out"}">${isIn ? "+" : ""}${qty} pkt${bags ? ` (${bags} bags)` : ''}</span></td>
         <td>${esc(m.movement_type)}</td>
       </tr>`;
     }).join("");

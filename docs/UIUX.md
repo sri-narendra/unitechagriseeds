@@ -127,12 +127,15 @@ Use the scale exclusively — no ad-hoc margins. Stack gaps default to `--space-
 ### 5.2 Inputs / selects
 - Height `40px`, radius `8px`, `1px` `--color-border`, `12px` padding.
 - Focus: `2px` `--color-primary` ring (never remove outline for a11y).
-- Quantity inputs are **integer-only**, show unit label ("units") beside.
+- Quantity inputs are **integer-only**, show unit label ("packets" / "bags") beside.
+- **Unit selector** (sale, order, return, allocate, redistribute): dropdown with
+  "Packets" / "Bags" — only enabled when product has `packets_per_bag` set.
+  Selecting "Bags" for packet-only product shows validation error.
 - **Search inputs** (list header): same input style but with a subtle
   "Search…" placeholder; filter is client-side and re-runs on `input`.
 - **Quantity steppers** (multi-item carts): `−` / `+` ghost buttons with the
   current count between them (`tabular-nums`); buttons disable at the bounds
-  (1 min, stock max).
+  (1 min, stock max in packets).
 - Labels sit above inputs, `--color-text`, weight 500.
 
 ### 5.3 Tables (core to dealer/admin)
@@ -157,10 +160,12 @@ Use the scale exclusively — no ad-hoc margins. Stack gaps default to `--space-
   text (not color alone).
 
 ### 5.7 Stock Stats view (dealer landing, `blueprint.md` §4.0)
-- Per-product card: **Name** + big **quantity** number + low-stock pill if
-  flagged.
+- Per-product card: **Name** + big **quantity** number (packets) + bag equivalent
+  below in brand green (e.g., "≈ 12.50 bags") when `packets_per_bag` is set.
+  Low-stock pill if flagged.
 - Recent movement list: each row shows direction icon (in/out) + product +
-  quantity + relative time.
+  quantity in packets with bag equivalent in parentheses + relative time.
+- Movement type tables (admin): quantity column shows "X pkt (Y bags)" format.
 
 ---
 
@@ -274,11 +279,12 @@ file, identical copies *are* the design system.
 
 ## 10. Consistency checklist
 
-- Quantity = integer + "units" label, tabular nums, never currency.
+- Quantity = integer + "packets" label (base unit), bag equivalent shown when `packets_per_bag` is set, tabular nums, never currency.
+- Unit selector ("Packets"/"Bags") on all quantity inputs where product has `packets_per_bag`.
 - Status always = pill (icon + text) using §2.2 tokens.
 - Portal tab nav matches `blueprint.md` §9 exactly.
 - Every motion respects `prefers-reduced-motion`.
-- Product = name + image only (`blueprint.md` §5.2) — no price/cost fields.
+- Product = name + image + optional `packets_per_bag` (`blueprint.md` §5.2) — no price/cost fields.
 - Static-HTML hygiene: same `<head>` meta, same token block (§9), same
   config script (`backendStack.md` §3), same header/nav markup in every page of
   a portal — copy, don't improvise.

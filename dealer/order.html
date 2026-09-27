@@ -111,7 +111,7 @@
 
   async function loadCatalogue() {
     const { data } = await supabase
-      .from("products").select("id, name, image_url")
+      .from("products").select("id, name, image_url, packets_per_bag")
       .eq("is_active", true).is("deleted_at", null).order("name");
     products = data || [];
     const cat = document.getElementById("catalogue");
@@ -129,16 +129,30 @@
       <div class="pcard">
         ${p.image_url && /^https?:\/\//i.test(p.image_url) ? `<img src="${esc(p.image_url)}" alt="${esc(p.name)}">` : `<div class="img-ph">🌾</div>`}
         <h3>${esc(p.name)}</h3>
-        <input type="number" min="1" step="1" inputmode="numeric" placeholder="Qty"
-               value="${cart.has(p.id) ? cart.get(p.id) : ""}" data-id="${p.id}">
+        ${p.packets_per_bag ? `<div class="hint">${p.packets_per_bag} packets = 1 bag</div>` : ''}
+        <div class="field-row" style="gap:6px;margin-top:8px">
+          <input type="number" min="1" step="1" inputmode="numeric" placeholder="Qty"
+                 value="${cart.has(p.id) ? cart.get(p.id).qty : ""}" data-id="${p.id}" style="flex:1">
+          <select data-unit="${p.id}" style="flex:1;min-width:90px">
+            <option value="packet">Packets</option>
+            <option value="bag">Bags</option>
+          </select>
+        </div>
         <button class="btn btn-secondary btn-sm add-btn" data-id="${p.id}" style="margin-top:8px;width:100%">Add to cart</button>
       </div>`).join("");
     cat.querySelectorAll(".add-btn").forEach(b => b.addEventListener("click", () => {
       const id = b.dataset.id;
       const input = cat.querySelector(`input[data-id="${id}"]`);
+      const unitSel = cat.querySelector(`select[data-unit="${id}"]`);
       const qty = Number(input.value);
+      const unit = unitSel?.value || 'packet';
       if (!Number.isSafeInteger(qty) || qty <= 0) return toast("Enter a positive whole number.", false);
-      cart.set(id, qty);
+      const p = products.find(x => x.id === id);
+      const packetsToAdd = unit === 'bag' && p?.packets_per_bag ? qty * p.packets_per_bag : qty;
+      const existing = cart.get(id);
+      const currentQty = existing ? existing.qty : 0;
+      const newQty = currentQty + packetsToAdd;
+      cart.set(id, { qty: newQty, unit });
       renderCart();
       toast(`${nameOf(id)} added to cart.`);
     }));
@@ -152,9 +166,14 @@
       submit.disabled = true;
       return;
     }
-    box.innerHTML = "<table><tbody>" + [...cart.entries()].map(([id, qty]) => `
-      <tr><td>${esc(nameOf(id))}</td><td class="num">${qty} units</td>
-      <td style="text-align:right"><button class="btn btn-danger btn-sm rm-btn" data-id="${id}">Remove</button></td></tr>`).join("")
+    box.innerHTML = "<table><tbody>" + [...cart.entries()].map(([id, item]) => {
+      const p = products.find(x => x.id === id);
+      const ppb = p?.packets_per_bag;
+      const bags = ppb && ppb > 0 ? (item.qty / ppb).toFixed(2) : null;
+      return `
+      <tr><td>${esc(nameOf(id))}</td><td class="num">${item.qty} pkt${bags ? ` (${bags} bags)` : ''}</td>
+      <td style="text-align:right"><button class="btn btn-danger btn-sm rm-btn" data-id="${id}">Remove</button></td></tr>`;
+    }).join("")
       + "</tbody></table>";
     box.querySelectorAll(".rm-btn").forEach(b => b.addEventListener("click", () => {
       cart.delete(b.dataset.id); renderCart();
@@ -167,7 +186,7 @@
     if (cart.size === 0) return;
     submit.disabled = true;
     try {
-      const items = [...cart.entries()].map(([product_id, quantity]) => ({ product_id, quantity }));
+      const items = [...cart.entries()].map(([product_id, item]) => ({ product_id, quantity: item.qty, unit: item.unit }));
       const { data, error } = await supabase.rpc("create_order", {
         p_items: items,
         p_client_ref: orderClientRef,
@@ -189,7 +208,7 @@
   async function loadOrders() {
     const { data } = await supabase
       .from("orders")
-      .select("id, status, created_at, order_items(quantity, products(name))")
+      .select("id, status, created_at, order_items(quantity, products(name, packets_per_bag))")
       .eq("dealer_id", dealerId)
       .order("created_at", { ascending: false })
       .limit(20);
@@ -199,7 +218,12 @@
     empty.style.display = "none";
     rows.innerHTML = data.map(o => `<tr>
       <td>${fmtDate(o.created_at)}</td>
-      <td>${(o.order_items || []).map(i => `${esc(i.products ? i.products.name : "—")} × ${i.quantity}`).join("<br>")}</td>
+      <td>${(o.order_items || []).map(i => {
+        const qty = i.quantity;
+        const ppb = i.products?.packets_per_bag;
+        const bags = ppb && ppb > 0 ? (qty / ppb).toFixed(2) : null;
+        return `${esc(i.products ? i.products.name : "—")} × ${qty} pkt${bags ? ` (${bags} bags)` : ''}`;
+      }).join("<br>")}</td>
       <td>${pill(o.status)}</td>
     </tr>`).join("");
   }

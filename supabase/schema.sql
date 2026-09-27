@@ -35,14 +35,17 @@ create table if not exists admins (
 );
 
 create table if not exists products (
-  id         uuid primary key default gen_random_uuid(),
-  name       text not null,
-  image_url  text,
-  is_active  boolean not null default true,
-  deleted_at timestamptz,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  id                uuid primary key default gen_random_uuid(),
+  name              text not null,
+  image_url         text,
+  is_active         boolean not null default true,
+  packets_per_bag   integer check (packets_per_bag IS NULL OR packets_per_bag > 0),
+  deleted_at        timestamptz,
+  created_at        timestamptz not null default now(),
+  updated_at        timestamptz not null default now()
 );
+
+comment on column products.packets_per_bag is 'Number of packets in one bag. NULL = product not sold in bags.';
 
 create table if not exists dealer_stock (
   dealer_id  uuid not null references dealers(id) on delete restrict,
@@ -312,13 +315,55 @@ create policy "product images admin delete" on storage.objects for delete
          and (auth.jwt() -> 'app_metadata' ->> 'role') = 'admin');
 
 -- ----------------------------------------------------------------------------
--- 5. RPCs — all stock math lives here (atomic, one transaction each).
+-- 5. Helper functions
+-- ----------------------------------------------------------------------------
+
+-- Convert bags to packets (rounds down to nearest packet)
+create or replace function bags_to_packets(p_product uuid, p_bags numeric)
+returns integer
+language sql stable set search_path = public as $$
+  select case
+    when packets_per_bag is null or packets_per_bag = 0 then null
+    else floor(p_bags * packets_per_bag)::int
+  end
+  from products where id = p_product;
+$$;
+
+-- Convert packets to bags (decimal)
+create or replace function packets_to_bags(p_product uuid, p_packets integer)
+returns numeric
+language sql stable set search_path = public as $$
+  select case
+    when packets_per_bag is null or packets_per_bag = 0 then null
+    else round(p_packets::numeric / packets_per_bag, 3)
+  end
+  from products where id = p_product;
+$$;
+
+-- Resolve quantity from input (supports unit: 'packet' | 'bag')
+-- Returns NULL if product doesn't exist, or if unit='bag' and packets_per_bag is NULL/0
+create or replace function resolve_quantity(p_product uuid, p_quantity numeric, p_unit text default 'packet')
+returns integer
+language sql stable set search_path = public as $$
+  select case
+    when p_unit = 'bag' then
+      case when packets_per_bag is null or packets_per_bag = 0 then null
+      else floor(p_quantity * packets_per_bag)::int end
+    else p_quantity::int
+  end
+  from products where id = p_product;
+$$;
+
+-- ----------------------------------------------------------------------------
+-- 6. RPCs — all stock math lives here (atomic, one transaction each).
 -- Browser pages call: supabase.rpc("<name>", { p_... })
+-- All quantities stored as packets. Input can be packets or bags via p_unit.
 -- ----------------------------------------------------------------------------
 
 -- Dealer records a sale: ONE atomic transaction for ALL items.
 -- Uses sale_transactions + sale_items instead of flat sales rows.
--- p_items: '[{"product_id":"<uuid>","quantity":3}, …]'
+-- p_items: '[{"product_id":"<uuid>","quantity":3,"unit":"packet"}, ...]'
+-- unit: 'packet' (default) or 'bag' - converts to packets for storage
 -- Dealer identity comes from the JWT claim, so a dealer can only ever touch
 -- their own stock. Replaying the same p_client_ref does nothing (replay flag).
 drop function if exists record_sale(jsonb, uuid);
@@ -331,6 +376,8 @@ declare
   v_before int;
   v_txn    uuid;
   v_items  jsonb := '[]'::jsonb;
+  v_qty    int;
+  v_unit   text;
 begin
   if v_dealer is null then
     raise exception 'FORBIDDEN: no dealer_id in JWT';
@@ -354,10 +401,15 @@ begin
 
   for item in select * from jsonb_array_elements(p_items)
   loop
-    if coalesce((item->>'quantity')::int, 0) <= 0 then
+    v_unit := coalesce(item->>'unit', 'packet');
+    v_qty := resolve_quantity((item->>'product_id')::uuid, (item->>'quantity')::numeric, v_unit);
+    if v_qty is null then
+      raise exception 'VALIDATION_ERROR: product % has no packets_per_bag set for bag unit', item->>'product_id';
+    end if;
+    if v_qty <= 0 then
       raise exception 'VALIDATION_ERROR: quantity must be a positive integer';
     end if;
-    if (item->>'quantity')::int > 10000 then
+    if v_qty > 10000 then
       raise exception 'VALIDATION_ERROR: quantity exceeds maximum of 10000 per item';
     end if;
 
@@ -371,33 +423,36 @@ begin
     v_before := coalesce(v_before, 0);
 
     update dealer_stock
-       set quantity = quantity - (item->>'quantity')::int, updated_at = now()
+       set quantity = quantity - v_qty, updated_at = now()
      where dealer_id = v_dealer and product_id = (item->>'product_id')::uuid
-       and quantity >= (item->>'quantity')::int;
+       and quantity >= v_qty;
     if not found then
-      if v_before < (item->>'quantity')::int then
-        raise exception 'INSUFFICIENT_STOCK: product % has only % units', (item->>'product_id'), v_before;
+      if v_before < v_qty then
+        raise exception 'INSUFFICIENT_STOCK: product % has only % packets', (item->>'product_id'), v_before;
       end if;
       raise exception 'CONCURRENT_MODIFICATION';
     end if;
 
     insert into sale_items (transaction_id, product_id, quantity)
-      values (v_txn, (item->>'product_id')::uuid, (item->>'quantity')::int);
+      values (v_txn, (item->>'product_id')::uuid, v_qty);
 
     insert into stock_movements (dealer_id, product_id, quantity, movement_type, reference_id, actor_user_id)
-      values (v_dealer, (item->>'product_id')::uuid, -(item->>'quantity')::int, 'SALE', v_txn, auth.uid());
+      values (v_dealer, (item->>'product_id')::uuid, -v_qty, 'SALE', v_txn, auth.uid());
 
     v_items := v_items || jsonb_build_array(jsonb_build_object(
       'product_id', item->>'product_id',
       'quantity_before', v_before,
-      'quantity_after', v_before - (item->>'quantity')::int));
+      'quantity_after', v_before - v_qty,
+      'unit', v_unit,
+      'input_quantity', (item->>'quantity')::numeric));
   end loop;
 
   return jsonb_build_object('replayed', false, 'items', v_items);
 end $$;
 
 -- Dealer creates an order atomically: order + items in one transaction.
--- p_items: '[{"product_id":"<uuid>","quantity":3}, …]'
+-- p_items: '[{"product_id":"<uuid>","quantity":3,"unit":"packet"}, ...]'
+-- unit: 'packet' (default) or 'bag' - converts to packets for storage
 drop function if exists create_order(jsonb, uuid);
 create or replace function create_order(p_items jsonb, p_client_ref uuid default null)
 returns uuid
@@ -406,6 +461,8 @@ declare
   v_dealer uuid := (auth.jwt() -> 'app_metadata' ->> 'dealer_id')::uuid;
   v_order  uuid;
   item     jsonb;
+  v_qty    int;
+  v_unit   text;
 begin
   if v_dealer is null then
     raise exception 'FORBIDDEN: no dealer_id in JWT';
@@ -431,24 +488,30 @@ begin
 
   for item in select * from jsonb_array_elements(p_items)
   loop
-    if coalesce((item->>'quantity')::int, 0) <= 0 then
+    v_unit := coalesce(item->>'unit', 'packet');
+    v_qty := resolve_quantity((item->>'product_id')::uuid, (item->>'quantity')::numeric, v_unit);
+    if v_qty is null then
+      raise exception 'VALIDATION_ERROR: product % has no packets_per_bag set for bag unit', item->>'product_id';
+    end if;
+    if v_qty <= 0 then
       raise exception 'VALIDATION_ERROR: quantity must be a positive integer';
     end if;
-    if (item->>'quantity')::int > 10000 then
+    if v_qty > 10000 then
       raise exception 'VALIDATION_ERROR: quantity exceeds maximum of 10000 per item';
     end if;
     if not exists (select 1 from products where id = (item->>'product_id')::uuid and is_active = true) then
       raise exception 'VALIDATION_ERROR: product % is inactive or does not exist', item->>'product_id';
     end if;
     insert into order_items (order_id, product_id, quantity)
-      values (v_order, (item->>'product_id')::uuid, (item->>'quantity')::int);
+      values (v_order, (item->>'product_id')::uuid, v_qty);
   end loop;
 
   return v_order;
 end $$;
 
 -- Dealer creates a return atomically: return + items in one transaction.
--- p_items: '[{"product_id":"<uuid>","quantity":3}, …]'
+-- p_items: '[{"product_id":"<uuid>","quantity":3,"unit":"packet"}, ...]'
+-- unit: 'packet' (default) or 'bag' - converts to packets for storage
 drop function if exists create_return(jsonb, uuid);
 create or replace function create_return(p_items jsonb, p_client_ref uuid default null)
 returns uuid
@@ -457,6 +520,8 @@ declare
   v_dealer uuid := (auth.jwt() -> 'app_metadata' ->> 'dealer_id')::uuid;
   v_return uuid;
   item     jsonb;
+  v_qty    int;
+  v_unit   text;
 begin
   if v_dealer is null then
     raise exception 'FORBIDDEN: no dealer_id in JWT';
@@ -482,35 +547,43 @@ begin
 
   for item in select * from jsonb_array_elements(p_items)
   loop
-    if coalesce((item->>'quantity')::int, 0) <= 0 then
+    v_unit := coalesce(item->>'unit', 'packet');
+    v_qty := resolve_quantity((item->>'product_id')::uuid, (item->>'quantity')::numeric, v_unit);
+    if v_qty is null then
+      raise exception 'VALIDATION_ERROR: product % has no packets_per_bag set for bag unit', item->>'product_id';
+    end if;
+    if v_qty <= 0 then
       raise exception 'VALIDATION_ERROR: quantity must be a positive integer';
     end if;
-    if (item->>'quantity')::int > 10000 then
+    if v_qty > 10000 then
       raise exception 'VALIDATION_ERROR: quantity exceeds maximum of 10000 per item';
     end if;
     if not exists (select 1 from products where id = (item->>'product_id')::uuid and is_active = true) then
       raise exception 'VALIDATION_ERROR: product % is inactive or does not exist', item->>'product_id';
     end if;
     -- Verify dealer actually holds this product before allowing return
-    if not exists (select 1 from dealer_stock where dealer_id = v_dealer and product_id = (item->>'product_id')::uuid and quantity >= (item->>'quantity')::int) then
+    if not exists (select 1 from dealer_stock where dealer_id = v_dealer and product_id = (item->>'product_id')::uuid and quantity >= v_qty) then
       raise exception 'INSUFFICIENT_STOCK: dealer does not hold enough of product %', item->>'product_id';
     end if;
     insert into return_items (return_id, product_id, quantity)
-      values (v_return, (item->>'product_id')::uuid, (item->>'quantity')::int);
+      values (v_return, (item->>'product_id')::uuid, v_qty);
   end loop;
 
   return v_return;
 end $$;
 
 -- Admin approves an order: order pending -> sent, dealer stock += items.
+-- Returns bags equivalent for display.
 drop function if exists approve_order(uuid);
 create or replace function approve_order(p_order uuid)
-returns void
+returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare
   r        record;
   v_dealer uuid;
   v_actor  uuid := auth.uid();
+  v_items  jsonb := '[]'::jsonb;
+  v_bags   numeric;
 begin
   if (auth.jwt() -> 'app_metadata' ->> 'role') is distinct from 'admin' then
     raise exception 'FORBIDDEN';
@@ -537,7 +610,15 @@ begin
 
     insert into stock_movements (dealer_id, product_id, quantity, movement_type, reference_id, actor_user_id)
       values (v_dealer, r.product_id, r.quantity, 'ORDER', p_order, v_actor);
+
+    v_bags := packets_to_bags(r.product_id, r.quantity);
+    v_items := v_items || jsonb_build_array(jsonb_build_object(
+      'product_id', r.product_id,
+      'packets', r.quantity,
+      'bags', v_bags));
   end loop;
+
+  return jsonb_build_object('items', v_items);
 end $$;
 
 -- Admin rejects a pending order (no stock movement).
@@ -557,14 +638,17 @@ begin
 end $$;
 
 -- Admin accepts a return after physical receipt: dealer stock -= items.
+-- Returns bags equivalent for display.
 drop function if exists accept_return(uuid);
 create or replace function accept_return(p_return uuid)
-returns void
+returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare
   r        record;
   v_dealer uuid;
   v_actor  uuid := auth.uid();
+  v_items  jsonb := '[]'::jsonb;
+  v_bags   numeric;
 begin
   if (auth.jwt() -> 'app_metadata' ->> 'role') is distinct from 'admin' then
     raise exception 'FORBIDDEN';
@@ -593,7 +677,15 @@ begin
 
     insert into stock_movements (dealer_id, product_id, quantity, movement_type, reference_id, actor_user_id)
       values (v_dealer, r.product_id, -r.quantity, 'RETURN', p_return, v_actor);
+
+    v_bags := packets_to_bags(r.product_id, r.quantity);
+    v_items := v_items || jsonb_build_array(jsonb_build_object(
+      'product_id', r.product_id,
+      'packets', r.quantity,
+      'bags', v_bags));
   end loop;
+
+  return jsonb_build_object('items', v_items);
 end $$;
 
 -- Admin rejects a pending return (no stock movement).
@@ -613,15 +705,21 @@ begin
 end $$;
 
 -- Admin directly allocates stock to a dealer (no request needed).
--- p_items: '[{"product_id":"<uuid>","quantity":3}, …]' — one transaction.
+-- p_items: '[{"product_id":"<uuid>","quantity":3,"unit":"packet"}, ...]' — one transaction.
+-- unit: 'packet' (default) or 'bag' - converts to packets for storage
+-- Returns bags equivalent for display.
 drop function if exists allocate_stock(uuid, jsonb);
 create or replace function allocate_stock(p_dealer uuid, p_items jsonb)
-returns int
+returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare
   item   jsonb;
   n      int := 0;
   v_actor uuid := auth.uid();
+  v_qty  int;
+  v_unit text;
+  v_bags numeric;
+  v_items jsonb := '[]'::jsonb;
 begin
   if (auth.jwt() -> 'app_metadata' ->> 'role') is distinct from 'admin' then
     raise exception 'FORBIDDEN';
@@ -635,39 +733,58 @@ begin
 
   for item in select * from jsonb_array_elements(p_items)
   loop
-    if coalesce((item->>'quantity')::int, 0) <= 0 then
+    v_unit := coalesce(item->>'unit', 'packet');
+    v_qty := resolve_quantity((item->>'product_id')::uuid, (item->>'quantity')::numeric, v_unit);
+    if v_qty is null then
+      raise exception 'VALIDATION_ERROR: product % has no packets_per_bag set for bag unit', item->>'product_id';
+    end if;
+    if v_qty <= 0 then
       raise exception 'VALIDATION_ERROR: quantity must be a positive integer';
     end if;
-    if (item->>'quantity')::int > 10000 then
+    if v_qty > 10000 then
       raise exception 'VALIDATION_ERROR: quantity exceeds maximum of 10000 per item';
     end if;
 
     insert into dealer_stock (dealer_id, product_id, quantity)
-      values (p_dealer, (item->>'product_id')::uuid, (item->>'quantity')::int)
+      values (p_dealer, (item->>'product_id')::uuid, v_qty)
     on conflict (dealer_id, product_id)
       do update set quantity = dealer_stock.quantity + excluded.quantity,
                     updated_at = now();
 
     insert into stock_movements (dealer_id, product_id, quantity, movement_type, actor_user_id)
-      values (p_dealer, (item->>'product_id')::uuid, (item->>'quantity')::int, 'ALLOCATION', v_actor);
+      values (p_dealer, (item->>'product_id')::uuid, v_qty, 'ALLOCATION', v_actor);
+
+    v_bags := packets_to_bags((item->>'product_id')::uuid, v_qty);
+    v_items := v_items || jsonb_build_array(jsonb_build_object(
+      'product_id', item->>'product_id',
+      'packets', v_qty,
+      'bags', v_bags,
+      'unit', v_unit,
+      'input_quantity', (item->>'quantity')::numeric));
     n := n + 1;
   end loop;
-  return n;
+  return jsonb_build_object('count', n, 'items', v_items);
 end $$;
 
 -- Admin moves stock between dealers (single transaction: subtract source,
 -- add target, paired REDISTRIBUTE movements sharing one reference id;
 -- any failure rolls back all items).
--- p_items: '[{"product_id":"<uuid>","quantity":3}, …]'
+-- p_items: '[{"product_id":"<uuid>","quantity":3,"unit":"packet"}, ...]'
+-- unit: 'packet' (default) or 'bag' - converts to packets for storage
+-- Returns bags equivalent for display.
 drop function if exists redistribute_stock(uuid, uuid, jsonb);
 create or replace function redistribute_stock(p_from_dealer uuid, p_to_dealer uuid, p_items jsonb)
-returns int
+returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare
   item      jsonb;
   n         int := 0;
   redist_id uuid := gen_random_uuid();
   v_actor   uuid := auth.uid();
+  v_qty     int;
+  v_unit    text;
+  v_bags    numeric;
+  v_items   jsonb := '[]'::jsonb;
 begin
   if (auth.jwt() -> 'app_metadata' ->> 'role') is distinct from 'admin' then
     raise exception 'FORBIDDEN';
@@ -681,33 +798,46 @@ begin
 
   for item in select * from jsonb_array_elements(p_items)
   loop
-    if coalesce((item->>'quantity')::int, 0) <= 0 then
+    v_unit := coalesce(item->>'unit', 'packet');
+    v_qty := resolve_quantity((item->>'product_id')::uuid, (item->>'quantity')::numeric, v_unit);
+    if v_qty is null then
+      raise exception 'VALIDATION_ERROR: product % has no packets_per_bag set for bag unit', item->>'product_id';
+    end if;
+    if v_qty <= 0 then
       raise exception 'VALIDATION_ERROR: quantity must be a positive integer';
     end if;
-    if (item->>'quantity')::int > 10000 then
+    if v_qty > 10000 then
       raise exception 'VALIDATION_ERROR: quantity exceeds maximum of 10000 per item';
     end if;
 
     update dealer_stock
-       set quantity = quantity - (item->>'quantity')::int, updated_at = now()
+       set quantity = quantity - v_qty, updated_at = now()
      where dealer_id = p_from_dealer and product_id = (item->>'product_id')::uuid
-       and quantity >= (item->>'quantity')::int;
+       and quantity >= v_qty;
     if not found then
       raise exception 'INSUFFICIENT_STOCK';
     end if;
 
     insert into dealer_stock (dealer_id, product_id, quantity)
-      values (p_to_dealer, (item->>'product_id')::uuid, (item->>'quantity')::int)
+      values (p_to_dealer, (item->>'product_id')::uuid, v_qty)
     on conflict (dealer_id, product_id)
       do update set quantity = dealer_stock.quantity + excluded.quantity,
                     updated_at = now();
 
     insert into stock_movements (dealer_id, product_id, quantity, movement_type, reference_id, actor_user_id)
-      values (p_from_dealer, (item->>'product_id')::uuid, -(item->>'quantity')::int, 'REDISTRIBUTE', redist_id, v_actor),
-             (p_to_dealer,   (item->>'product_id')::uuid,  (item->>'quantity')::int, 'REDISTRIBUTE', redist_id, v_actor);
+      values (p_from_dealer, (item->>'product_id')::uuid, -v_qty, 'REDISTRIBUTE', redist_id, v_actor),
+             (p_to_dealer,   (item->>'product_id')::uuid,  v_qty, 'REDISTRIBUTE', redist_id, v_actor);
+
+    v_bags := packets_to_bags((item->>'product_id')::uuid, v_qty);
+    v_items := v_items || jsonb_build_array(jsonb_build_object(
+      'product_id', item->>'product_id',
+      'packets', v_qty,
+      'bags', v_bags,
+      'unit', v_unit,
+      'input_quantity', (item->>'quantity')::numeric));
     n := n + 1;
   end loop;
-  return n;
+  return jsonb_build_object('count', n, 'items', v_items);
 end $$;
 
 -- ----------------------------------------------------------------------------

@@ -87,7 +87,7 @@
   async function loadOrders() {
     const { data } = await supabase
       .from("orders")
-      .select("id, status, created_at, dealers(shop_name), order_items(quantity, products(name))")
+      .select("id, status, created_at, dealers(shop_name), order_items(quantity, products(name, packets_per_bag))")
       .order("created_at", { ascending: false })
       .limit(50);
     const rows = document.getElementById("rows");
@@ -105,14 +105,19 @@
       rows.innerHTML = '<tr><td colspan="5" class="empty">No orders match your search.</td></tr>';
       return;
     }
-    empty.style.display = "none";
+empty.style.display = "none";
     rows.innerHTML = list.map(o => `<tr>
       <td>${fmtDate(o.created_at)}</td>
       <td>${esc(o.dealers ? o.dealers.shop_name : "—")}</td>
-      <td>${(o.order_items || []).map(i => `${esc(i.products ? i.products.name : "—")} × ${i.quantity}`).join("<br>")}</td>
+      <td>${(o.order_items || []).map(i => {
+        const qty = i.quantity;
+        const ppb = i.products?.packets_per_bag;
+        const bags = ppb && ppb > 0 ? (qty / ppb).toFixed(2) : null;
+        return `${esc(i.products ? i.products.name : "—")} × ${qty} pkt${bags ? ` (${bags} bags)` : ''}`;
+      }).join("<br>")}</td>
       <td>${pill(o.status)}</td>
       <td>${o.status === "pending" ? `
-        <button class="btn btn-primary btn-sm" data-approve="${o.id}">Approve &amp; send</button>
+        <button class="btn btn-primary btn-sm" data-approve="${o.id}">Approve & send</button>
         <button class="btn btn-danger btn-sm" data-reject="${o.id}">Reject</button>` : "—"}</td>
     </tr>`).join("");
 

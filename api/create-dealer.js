@@ -80,9 +80,9 @@ module.exports = async (req, res) => {
   const items = Array.isArray(b.initial_stock) ? b.initial_stock : [];
   const validItems = items.filter(i => i && i.product_id && Number(i.quantity) > 0);
   if (validItems.length) {
-    // Validate products exist and are active
+    // Validate products exist and are active, also fetch packets_per_bag
     const productIds = validItems.map(i => i.product_id);
-    const prods = await sbFetch("/rest/v1/products?id=in.(" + productIds.join(",") + ")&select=id,is_active", {
+    const prods = await sbFetch("/rest/v1/products?id=in.(" + productIds.join(",") + ")&select=id,is_active,packets_per_bag", {
       key: SERVICE_KEY, token: SERVICE_KEY,
     });
     if (prods.ok && prods.json) {
@@ -92,10 +92,22 @@ module.exports = async (req, res) => {
         return fail(res, 422, "VALIDATION_ERROR", inactive.length + " selected product(s) are inactive.");
       }
     }
+    const ppbMap = {};
+    if (prods.ok && prods.json) {
+      prods.json.forEach(p => { ppbMap[p.id] = p.packets_per_bag; });
+    }
 
-    const stockRows = validItems.map(i => ({
-      dealer_id: userId, product_id: i.product_id, quantity: Math.floor(Number(i.quantity)),
-    }));
+    // Convert quantities based on unit
+    const stockRows = validItems.map(i => {
+      const qty = Number(i.quantity);
+      const unit = i.unit || 'packet';
+      const ppb = ppbMap[i.product_id];
+      if (unit === 'bag') {
+        if (!ppb) throw new Error("VALIDATION_ERROR: product " + i.product_id + " has no packets_per_bag set for bag unit");
+        return { dealer_id: userId, product_id: i.product_id, quantity: Math.floor(qty * ppb) };
+      }
+      return { dealer_id: userId, product_id: i.product_id, quantity: Math.floor(qty) };
+    });
     const up = await sbFetch("/rest/v1/dealer_stock?on_conflict=dealer_id,product_id", {
       method: "POST", key: SERVICE_KEY, token: SERVICE_KEY,
       prefer: "resolution=merge-duplicates",
@@ -108,13 +120,19 @@ module.exports = async (req, res) => {
     }
 
     // Create audit movements for initial stock
-    const movements = validItems.map(i => ({
-      dealer_id: userId,
-      product_id: i.product_id,
-      quantity: Math.floor(Number(i.quantity)),
-      movement_type: "ALLOCATION",
-      actor_user_id: admin.id || null,
-    }));
+    const movements = validItems.map(i => {
+      const qty = Number(i.quantity);
+      const unit = i.unit || 'packet';
+      const ppb = ppbMap[i.product_id];
+      const finalQty = unit === 'bag' && ppbMap[i.product_id] ? Math.floor(qty * ppbMap[i.product_id]) : Math.floor(Number(i.quantity));
+      return {
+        dealer_id: userId,
+        product_id: i.product_id,
+        quantity: finalQty,
+        movement_type: "ALLOCATION",
+        actor_user_id: admin.id || null,
+      };
+    });
     await sbFetch("/rest/v1/stock_movements", {
       method: "POST", key: SERVICE_KEY, token: SERVICE_KEY,
       body: movements,

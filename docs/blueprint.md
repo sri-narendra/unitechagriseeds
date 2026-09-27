@@ -222,11 +222,13 @@ Three stock-movement methods:
 ## 7. Data Model (what is stored)
 
 - **Dealer:** shop name, dealer name, village, mandal, district, Account ID,
-  per-product stock quantity.
-- **Product (a crop):** name + image.
-- **Stock:** dealer ↔ product mapping with quantities; sale history (stock out
-  to customers); return history (stock out, back to company); order requests
-  with status and timestamps.
+  per-product stock quantity (in packets).
+- **Product (a crop):** name + image + optional `packets_per_bag` (integer, >0).
+  When set, 1 bag = N packets. Products without this field are packet-only.
+- **Stock:** dealer ↔ product mapping with quantities stored in **packets** (base unit).
+  Display shows both packets and bags (when `packets_per_bag` is set).
+- **Sale history, return history, order requests, stock movements:** all quantities
+  stored as packets; responses include both units for display.
 - Full schema: `backendStack.md` §4. The company's own warehouse stock is
   tracked **manually outside the system** — there is no company-stock table.
 

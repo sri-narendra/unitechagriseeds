@@ -88,7 +88,7 @@
   async function loadReturns() {
     const { data } = await supabase
       .from("returns")
-      .select("id, status, created_at, dealers(shop_name), return_items(quantity, products(name))")
+      .select("id, status, created_at, dealers(shop_name), return_items(quantity, products(name, packets_per_bag))")
       .order("created_at", { ascending: false })
       .limit(50);
     const rows = document.getElementById("rows");
@@ -109,7 +109,12 @@
     rows.innerHTML = list.map(r => `<tr>
       <td>${fmtDate(r.created_at)}</td>
       <td>${esc(r.dealers ? r.dealers.shop_name : "—")}</td>
-      <td>${(r.return_items || []).map(i => `${esc(i.products ? i.products.name : "—")} × ${i.quantity}`).join("<br>")}</td>
+      <td>${(r.return_items || []).map(i => {
+        const qty = i.quantity;
+        const ppb = i.products?.packets_per_bag;
+        const bags = ppb && ppb > 0 ? (qty / ppb).toFixed(2) : null;
+        return `${esc(i.products ? i.products.name : "—")} × ${qty} pkt${bags ? ` (${bags} bags)` : ''}`;
+      }).join("<br>")}</td>
       <td>${pill(r.status)}</td>
       <td>${r.status === "pending" ? `
         <button class="btn btn-primary btn-sm" data-accept="${r.id}">Accept (stock received)</button>

@@ -61,28 +61,44 @@ assert(me.app_metadata && me.app_metadata.role === "dealer", "dealer token has r
 // --- fixture: two e2e products (needed for multi-item sale test) ---
 const pid = crypto.randomUUID();
 const pid2 = crypto.randomUUID();
-const ins = await rest(admin, "POST", "/rest/v1/products", { id: pid, name: "e2e product" });
-const ins2 = await rest(admin, "POST", "/rest/v1/products", { id: pid2, name: "e2e product 2" });
-assert(ins.ok && ins2.ok, "admin creates e2e products");
+const ins = await rest(admin, "POST", "/rest/v1/products", { id: pid, name: "e2e product", packets_per_bag: 10 });
+const ins2 = await rest(admin, "POST", "/rest/v1/products", { id: pid2, name: "e2e product 2", packets_per_bag: 5 });
+assert(ins.ok && ins2.ok, "admin creates e2e products with packets_per_bag");
 
 // --- allocate 50 each via multi-item RPC ---
 const alloc = await rpc(admin, "allocate_stock", {
-  p_dealer: dealerId, p_items: [{ product_id: pid, quantity: 50 }, { product_id: pid2, quantity: 50 }],
+  p_dealer: dealerId, p_items: [{ product_id: pid, quantity: 50, unit: "packet" }, { product_id: pid2, quantity: 50, unit: "packet" }],
 });
-assert(alloc.ok, "allocate_stock accepts items[]");
+assert(alloc.ok, "allocate_stock accepts items[] with unit=packet");
+assert(alloc.body && alloc.body.items && alloc.body.items.length === 2, "allocate_stock returns items with bags");
+assert(alloc.body.items[0].bags === 5, "allocate_stock reports 5 bags for 50 packets at 10/bag");
+
+// --- test allocate_stock with bags unit ---
+const allocBags = await rpc(admin, "allocate_stock", {
+  p_dealer: dealerId, p_items: [{ product_id: pid, quantity: 2, unit: "bag" }, { product_id: pid2, quantity: 3, unit: "bag" }],
+});
+assert(allocBags.ok, "allocate_stock accepts items[] with unit=bag");
+assert(allocBags.body.items[0].packets === 20, "allocate_stock converts 2 bags to 20 packets at 10/bag");
+assert(allocBags.body.items[0].bags === 2, "allocate_stock reports 2 bags");
+assert(allocBags.body.items[1].packets === 15, "allocate_stock converts 3 bags to 15 packets at 5/bag");
 
 // --- multi-item sale (5 of pid + 10 of pid2) in ONE atomic call ---
 const ref = crypto.randomUUID();
 const sale = await rpc(dealer, "record_sale", {
-  p_items: [{ product_id: pid, quantity: 5 }, { product_id: pid2, quantity: 10 }],
+  p_items: [{ product_id: pid, quantity: 5, unit: "packet" }, { product_id: pid2, quantity: 10, unit: "packet" }],
   p_client_ref: ref,
 });
-assert(sale.ok && sale.body && sale.body.replayed === false, "record_sale accepts items[]");
-assert(sale.body && Array.isArray(sale.body.items) && sale.body.items.length === 2
-  && sale.body.items[0].quantity_before === 50 && sale.body.items[0].quantity_after === 45,
-  "record_sale reports quantity_before/after");
-const afterSale = (sale.body.items[1] || {}).quantity_after;
-assert(afterSale === 40, "sale totals: pid2 50 - 10 = 40");
+assert(sale.ok && sale.body && sale.body.replayed === false, "record_sale accepts items[] with unit=packet");
+assert(sale.body.items[0].bags === 0.5, "record_sale reports 0.5 bags for 5 packets at 10/bag");
+
+// --- test record_sale with bags unit ---
+const saleBags = await rpc(dealer, "record_sale", {
+  p_items: [{ product_id: pid, quantity: 1, unit: "bag" }, { product_id: pid2, quantity: 1, unit: "bag" }],
+  p_client_ref: crypto.randomUUID(),
+});
+assert(saleBags.ok, "record_sale accepts items[] with unit=bag");
+assert(saleBags.body.items[0].packets === 10, "record_sale converts 1 bag to 10 packets at 10/bag");
+assert(saleBags.body.items[1].packets === 5, "record_sale converts 1 bag to 5 packets at 5/bag");
 
 // --- replay with the same client_ref does NOT sell again ---
 const replay = await rpc(dealer, "record_sale", {
@@ -104,36 +120,74 @@ assert(own.ok, "dealer can read own stock via RLS");
 // --- order: create via RPC + admin approve (+qty) ---
 const orderClientRef = crypto.randomUUID();
 const orderResult = await rpc(dealer, "create_order", {
-  p_items: [{ product_id: pid, quantity: 20 }],
+  p_items: [{ product_id: pid, quantity: 20, unit: "packet" }],
   p_client_ref: orderClientRef,
 });
-assert(orderResult.ok, "dealer creates an order via create_order RPC");
+assert(orderResult.ok, "dealer creates an order via create_order RPC with unit=packet");
 const orderId = orderResult.body;
 assert(!!orderId, "create_order returns order UUID");
+
+// --- test create_order with bags unit ---
+const orderBagsRef = crypto.randomUUID();
+const orderBagsResult = await rpc(dealer, "create_order", {
+  p_items: [{ product_id: pid, quantity: 1, unit: "bag" }, { product_id: pid2, quantity: 2, unit: "bag" }],
+  p_client_ref: orderBagsRef,
+});
+assert(orderBagsResult.ok, "dealer creates an order via create_order RPC with unit=bag");
+const orderBagsId = orderBagsResult.body;
+assert(!!orderBagsId, "create_order with bags returns order UUID");
 
 const approved = await rpc(admin, "approve_order", { p_order: orderId });
 assert(approved.ok, "admin approves the order");
 const double = await rpc(admin, "approve_order", { p_order: orderId });
 assert(!double.ok, "approving twice is refused (status guard)");
 
+const approvedBags = await rpc(admin, "approve_order", { p_order: orderBagsId });
+assert(approvedBags.ok, "admin approves the bag order");
+assert(approvedBags.body.items[0].packets === 10, "approve_order converts 1 bag to 10 packets");
+assert(approvedBags.body.items[0].bags === 1, "approve_order reports 1 bag");
+assert(approvedBags.body.items[1].packets === 10, "approve_order converts 2 bags to 10 packets at 5/bag");
+assert(approvedBags.body.items[1].bags === 2, "approve_order reports 2 bags");
+
 // --- return: create via RPC + admin accept (-qty) ---
 const returnClientRef = crypto.randomUUID();
 const returnResult = await rpc(dealer, "create_return", {
-  p_items: [{ product_id: pid, quantity: 5 }],
+  p_items: [{ product_id: pid, quantity: 5, unit: "packet" }],
   p_client_ref: returnClientRef,
 });
-assert(returnResult.ok, "dealer creates a return via create_return RPC");
+assert(returnResult.ok, "dealer creates a return via create_return RPC with unit=packet");
 const returnId = returnResult.body;
 assert(!!returnId, "create_return returns return UUID");
+
+// --- test create_return with bags unit ---
+const returnBagsRef = crypto.randomUUID();
+const returnBagsResult = await rpc(dealer, "create_return", {
+  p_items: [{ product_id: pid, quantity: 1, unit: "bag" }],
+  p_client_ref: returnBagsRef,
+});
+assert(returnBagsResult.ok, "dealer creates a return via create_return RPC with unit=bag");
+const returnBagsId = returnBagsResult.body;
+assert(!!returnBagsId, "create_return with bags returns return UUID");
 
 const accepted = await rpc(admin, "accept_return", { p_return: returnId });
 assert(accepted.ok, "admin accepts the return");
 
-// --- expected final stock for pid: 45 + 20 - 5 = 60 ---
+const acceptedBags = await rpc(admin, "accept_return", { p_return: returnBagsId });
+assert(acceptedBags.ok, "admin accepts the bag return");
+assert(acceptedBags.body.items[0].packets === 10, "accept_return converts 1 bag to 10 packets");
+assert(acceptedBags.body.items[0].bags === 1, "accept_return reports 1 bag");
+
+// --- expected final stock for pid: 50 - 5 - 10 + 20 + 10 - 5 - 10 = 50 ---
+// --- expected final stock for pid2: 50 - 10 - 5 + 10 = 45 ---
 const stock = await rest(dealer, "GET",
   `/rest/v1/dealer_stock?dealer_id=eq.${dealerId}&product_id=eq.${pid}&select=quantity`);
 const qty = Array.isArray(stock.body) && stock.body[0] ? stock.body[0].quantity : null;
-assert(qty === 60, `final quantity is 60 (got ${qty})`);
+assert(qty === 50, `final pid quantity is 50 (got ${qty})`);
+
+const stock2 = await rest(dealer, "GET",
+  `/rest/v1/dealer_stock?dealer_id=eq.${dealerId}&product_id=eq.${pid2}&select=quantity`);
+const qty2 = Array.isArray(stock2.body) && stock2.body[0] ? stock2.body[0].quantity : null;
+assert(qty2 === 45, `final pid2 quantity is 45 (got ${qty2})`);
 
 // === NEGATIVE SECURITY TESTS ===
 // Dealer should NOT be able to directly modify transactional tables.

@@ -44,6 +44,11 @@
         <input id="p-name" required placeholder="e.g. Cotton Seed Supreme">
       </div>
       <div class="field">
+        <label for="p-ppb">Packets per bag (optional)</label>
+        <input id="p-ppb" type="number" min="1" step="1" placeholder="e.g. 10" inputmode="numeric">
+        <p class="hint">Leave empty if product is not sold in bags</p>
+      </div>
+      <div class="field">
         <label for="p-image">Image file (optional — stored in Supabase Storage)</label>
         <input id="p-image" type="file" accept="image/*"
                onchange="const pv=document.getElementById('p-preview');if(this.files[0]){pv.src=window.URL.createObjectURL(this.files[0]);pv.style.display='block';}">
@@ -153,7 +158,7 @@
     const list = q ? products.filter(p =>
       (p.name || "").toLowerCase().includes(q) || (p.image_url || "").toLowerCase().includes(q)) : products;
     if (list.length === 0) {
-      rows.innerHTML = '<tr><td colspan="4" class="empty">No products match your search.</td></tr>';
+      rows.innerHTML = '<tr><td colspan="5" class="empty">No products match your search.</td></tr>';
       return;
     }
     empty.style.display = "none";
@@ -162,6 +167,7 @@
         ? `<img src="${esc(p.image_url)}" alt="${esc(p.name)}" style="width:40px;height:40px;object-fit:cover;border-radius:var(--radius-sm)">`
         : `<div class="img-ph" style="width:40px;height:40px">🌾</div>`}</td>
       <td>${esc(p.name)}</td>
+      <td>${p.packets_per_bag ? `${p.packets_per_bag} pkt/bag` : '<span class="hint">—</span>'}</td>
       <td>${p.is_active ? '<span class="pill pill-active">active</span>' : '<span class="pill pill-muted">inactive</span>'}</td>
       <td class="row">
         <button class="btn btn-ghost btn-xs" data-edit="${p.id}">Edit</button>
@@ -181,6 +187,7 @@
     e.preventDefault();
     const btn = document.getElementById("add-btn");
     const name = document.getElementById("p-name").value.trim();
+    const packets_per_bag = document.getElementById("p-ppb").value;
     if (!name) return toast("Enter a product name.", false);
     btn.disabled = true;
     try {
@@ -189,10 +196,11 @@
       if (file && pastedUrl) return toast("Choose a file OR paste a URL — not both.", false);
       if (pastedUrl && !/^(https?:\/\/|blob:)/i.test(pastedUrl)) return toast("Image URL must start with http(s)://", false);
       const image_url = file ? await uploadImage(file) : (pastedUrl || null);
-      const { error } = await supabase.from("products").insert({ name, image_url });
+      const { error } = await supabase.from("products").insert({ name, image_url, packets_per_bag: packets_per_bag ? parseInt(packets_per_bag) : null });
       if (error) throw error;
       toast("Product added.");
       document.getElementById("p-name").value = "";
+      document.getElementById("p-ppb").value = "";
       document.getElementById("p-image").value = "";
       await loadProducts();
     } catch (ex) { toast(friendly(ex), false); }
@@ -207,6 +215,7 @@
       <h3>Edit product</h3>
       <form id="edit-form">
         <div class="field"><label>Name</label><input id="e-name" value="${esc(p.name)}" required></div>
+        <div class="field"><label>Packets per bag (optional)</label><input id="e-ppb" type="number" min="1" step="1" value="${p.packets_per_bag || ''}" inputmode="numeric"></div>
         <div class="field"><label>Replace image file (optional)</label><input id="e-image" type="file" accept="image/*"></div>
         <div class="field"><label>…or set an image URL</label><input id="e-url" type="url" value="${esc(p.image_url || "")}" placeholder="https://…"></div>
         <div class="modal-actions">
@@ -220,6 +229,9 @@
       try {
         const updates = { name: document.getElementById("e-name").value.trim(),
                           updated_at: new Date().toISOString() };
+        const ppb = document.getElementById("e-ppb").value;
+        if (ppb) updates.packets_per_bag = parseInt(ppb);
+        else updates.packets_per_bag = null;
         const file = document.getElementById("e-image").files[0];
         const eUrl = document.getElementById("e-url").value.trim();
         if (eUrl && !/^(https?:\/\/|blob:)/i.test(eUrl)) return toast("Image URL must start with http(s)://", false);
@@ -236,20 +248,25 @@
     });
   }
 
-  // ---- product stats: which dealers hold it ----
+// ---- product stats: which dealers hold it ----
   async function openHolders(id) {
     const p = products.find(x => x.id === id);
+    const ppb = p?.packets_per_bag;
     const { data } = await supabase
       .from("dealer_stock").select("quantity, dealers(shop_name, village)")
       .eq("product_id", id).order("quantity", { ascending: false });
-    const rows = (data || []).map(h => `<tr>
+    const rows = (data || []).map(h => {
+      const qty = h.quantity;
+      const bags = ppb && ppb > 0 ? (qty / ppb).toFixed(2) : null;
+      return `<tr>
       <td>${esc(h.dealers ? h.dealers.shop_name : "—")}</td>
       <td>${esc(h.dealers ? h.dealers.village || "—" : "")}</td>
-      <td class="num">${h.quantity}</td></tr>`).join("");
+      <td class="num">${qty} pkt${bags ? ` (${bags} bags)` : ''}</td></tr>`;
+    }).join("");
     openModal(`
       <h3>${esc(p ? p.name : "")} — who holds it</h3>
       ${rows ? `<div class="table-wrap"><div class="table-scroll"><table><thead><tr><th>Dealer</th><th>Village</th><th class="num">Units</th></tr></thead><tbody>${rows}</tbody></table></div></div>`
-             : '<p class="hint">No dealer holds this product yet.</p>'}
+               : '<p class="hint">No dealer holds this product yet.</p>'}
       <div class="modal-actions">
         <button class="btn btn-danger btn-sm" id="h-clear">Clear History</button>
         <button class="btn btn-ghost" id="h-close">Close</button>

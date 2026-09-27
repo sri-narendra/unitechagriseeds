@@ -14,6 +14,10 @@
     color: var(--brand-600);
     border-radius: var(--radius-sm);
   }
+  .chart-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: var(--sp-5); margin: var(--sp-6) 0; }
+  .chart-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: var(--sp-5); }
+  .chart-card h3 { font-size: var(--text-base); font-weight: 600; margin: 0 0 var(--sp-4); }
+  .chart-card canvas { width: 100% !important; max-height: 320px; }
 </style>
 </head>
 <body>
@@ -40,6 +44,11 @@
         <input id="p-name" required placeholder="e.g. Cotton Seed Supreme">
       </div>
       <div class="field">
+        <label for="p-ppb">Packets per bag (optional)</label>
+        <input id="p-ppb" type="number" min="1" step="1" placeholder="e.g. 10" inputmode="numeric">
+        <p class="hint">Leave empty if product is not sold in bags</p>
+      </div>
+      <div class="field">
         <label for="p-image">Image file (optional — stored in Supabase Storage)</label>
         <input id="p-image" type="file" accept="image/*"
                onchange="const pv=document.getElementById('p-preview');if(this.files[0]){pv.src=window.URL.createObjectURL(this.files[0]);pv.style.display='block';}">
@@ -58,8 +67,11 @@
 
   <div class="spread" style="margin-top:var(--sp-6);margin-bottom:var(--sp-4)">
     <h2 class="section-title" style="margin:0">All products</h2>
-    <div class="search-input">
-      <input id="search" placeholder="Search products…">
+    <div class="row" style="gap:var(--sp-3);align-items:center">
+      <button class="btn btn-danger btn-sm" id="clear-all-btn">Clear All History</button>
+      <div class="search-input">
+        <input id="search" placeholder="Search products…">
+      </div>
     </div>
   </div>
   <div class="table-wrap">
@@ -71,10 +83,19 @@
     </div>
     <div class="empty" id="empty" style="display:none">No products yet — add the first one above.</div>
   </div>
+
+  <h2 class="section-title">Product Analytics</h2>
+  <div class="chart-grid">
+    <div class="chart-card"><h3>Total Stock by Product</h3><canvas id="chart-prod-stock"></canvas></div>
+    <div class="chart-card"><h3>Dealers per Product</h3><canvas id="chart-prod-holders"></canvas></div>
+    <div class="chart-card"><h3>Stock by Dealer & Product</h3><canvas id="chart-dealer-prod"></canvas></div>
+    <div class="chart-card"><h3>Product Stock Status</h3><canvas id="chart-prod-status"></canvas></div>
+  </div>
 </main>
 <div class="toast-wrap" id="toasts"></div>
 <div class="scrim" id="scrim"><div class="modal" id="modal"></div></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <script>
   // ---- shared config (identical in every page — docs/backendStack.md §3) ----
   const SUPABASE_URL      = "https://eotigemxfgszrtrrfdma.supabase.co";   // TODO: your project URL
@@ -137,7 +158,7 @@
     const list = q ? products.filter(p =>
       (p.name || "").toLowerCase().includes(q) || (p.image_url || "").toLowerCase().includes(q)) : products;
     if (list.length === 0) {
-      rows.innerHTML = '<tr><td colspan="4" class="empty">No products match your search.</td></tr>';
+      rows.innerHTML = '<tr><td colspan="5" class="empty">No products match your search.</td></tr>';
       return;
     }
     empty.style.display = "none";
@@ -146,6 +167,7 @@
         ? `<img src="${esc(p.image_url)}" alt="${esc(p.name)}" style="width:40px;height:40px;object-fit:cover;border-radius:var(--radius-sm)">`
         : `<div class="img-ph" style="width:40px;height:40px">🌾</div>`}</td>
       <td>${esc(p.name)}</td>
+      <td>${p.packets_per_bag ? `${p.packets_per_bag} pkt/bag` : '<span class="hint">—</span>'}</td>
       <td>${p.is_active ? '<span class="pill pill-active">active</span>' : '<span class="pill pill-muted">inactive</span>'}</td>
       <td class="row">
         <button class="btn btn-ghost btn-xs" data-edit="${p.id}">Edit</button>
@@ -165,6 +187,7 @@
     e.preventDefault();
     const btn = document.getElementById("add-btn");
     const name = document.getElementById("p-name").value.trim();
+    const packets_per_bag = document.getElementById("p-ppb").value;
     if (!name) return toast("Enter a product name.", false);
     btn.disabled = true;
     try {
@@ -173,10 +196,11 @@
       if (file && pastedUrl) return toast("Choose a file OR paste a URL — not both.", false);
       if (pastedUrl && !/^(https?:\/\/|blob:)/i.test(pastedUrl)) return toast("Image URL must start with http(s)://", false);
       const image_url = file ? await uploadImage(file) : (pastedUrl || null);
-      const { error } = await supabase.from("products").insert({ name, image_url });
+      const { error } = await supabase.from("products").insert({ name, image_url, packets_per_bag: packets_per_bag ? parseInt(packets_per_bag) : null });
       if (error) throw error;
       toast("Product added.");
       document.getElementById("p-name").value = "";
+      document.getElementById("p-ppb").value = "";
       document.getElementById("p-image").value = "";
       await loadProducts();
     } catch (ex) { toast(friendly(ex), false); }
@@ -191,6 +215,7 @@
       <h3>Edit product</h3>
       <form id="edit-form">
         <div class="field"><label>Name</label><input id="e-name" value="${esc(p.name)}" required></div>
+        <div class="field"><label>Packets per bag (optional)</label><input id="e-ppb" type="number" min="1" step="1" value="${p.packets_per_bag || ''}" inputmode="numeric"></div>
         <div class="field"><label>Replace image file (optional)</label><input id="e-image" type="file" accept="image/*"></div>
         <div class="field"><label>…or set an image URL</label><input id="e-url" type="url" value="${esc(p.image_url || "")}" placeholder="https://…"></div>
         <div class="modal-actions">
@@ -204,6 +229,9 @@
       try {
         const updates = { name: document.getElementById("e-name").value.trim(),
                           updated_at: new Date().toISOString() };
+        const ppb = document.getElementById("e-ppb").value;
+        if (ppb) updates.packets_per_bag = parseInt(ppb);
+        else updates.packets_per_bag = null;
         const file = document.getElementById("e-image").files[0];
         const eUrl = document.getElementById("e-url").value.trim();
         if (eUrl && !/^(https?:\/\/|blob:)/i.test(eUrl)) return toast("Image URL must start with http(s)://", false);
@@ -220,24 +248,37 @@
     });
   }
 
-  // ---- product stats: which dealers hold it ----
+// ---- product stats: which dealers hold it ----
   async function openHolders(id) {
     const p = products.find(x => x.id === id);
+    const ppb = p?.packets_per_bag;
     const { data } = await supabase
       .from("dealer_stock").select("quantity, dealers(shop_name, village)")
       .eq("product_id", id).order("quantity", { ascending: false });
-    const rows = (data || []).map(h => `<tr>
+    const rows = (data || []).map(h => {
+      const qty = h.quantity;
+      const bags = ppb && ppb > 0 ? (qty / ppb).toFixed(2) : null;
+      return `<tr>
       <td>${esc(h.dealers ? h.dealers.shop_name : "—")}</td>
       <td>${esc(h.dealers ? h.dealers.village || "—" : "")}</td>
-      <td class="num">${h.quantity}</td></tr>`).join("");
+      <td class="num">${qty} pkt${bags ? ` (${bags} bags)` : ''}</td></tr>`;
+    }).join("");
     openModal(`
       <h3>${esc(p ? p.name : "")} — who holds it</h3>
       ${rows ? `<div class="table-wrap"><div class="table-scroll"><table><thead><tr><th>Dealer</th><th>Village</th><th class="num">Units</th></tr></thead><tbody>${rows}</tbody></table></div></div>`
-             : '<p class="hint">No dealer holds this product yet.</p>'}
+               : '<p class="hint">No dealer holds this product yet.</p>'}
       <div class="modal-actions">
+        <button class="btn btn-danger btn-sm" id="h-clear">Clear History</button>
         <button class="btn btn-ghost" id="h-close">Close</button>
       </div>`);
     document.getElementById("h-close").addEventListener("click", closeModal);
+    document.getElementById("h-clear").addEventListener("click", async () => {
+      if (!confirm(`Clear all stock history for "${p ? p.name : "this product"}"? This removes all inventory records.`)) return;
+      const { error } = await supabase.from("dealer_stock").update({ deleted_at: new Date().toISOString() }).eq("product_id", id).is("deleted_at", null);
+      if (error) return toast(friendly(error), false);
+      toast("Stock history cleared.");
+      await openHolders(id);
+    });
   }
 
   // ---- deactivate / activate ----
@@ -275,6 +316,82 @@
 
   document.getElementById("search").addEventListener("input", loadProducts);
 
+  document.getElementById("clear-all-btn").addEventListener("click", async () => {
+    if (!confirm("Clear ALL product stock history? This removes all inventory records.")) return;
+    const { error } = await supabase.from("dealer_stock").update({ deleted_at: new Date().toISOString() }).is("deleted_at", null);
+    if (error) return toast(friendly(error), false);
+    toast("All stock history cleared.");
+    await loadProducts();
+  });
+
+  // ponytail: charts inline here so supabase is in scope
+  async function loadCharts() {
+    const colors = ['#16a34a','#2563eb','#ea580c','#9333ea','#dc2626','#0891b2','#ca8a04','#db2777','#4f46e5','#059669','#6d28d9','#b91c1c'];
+    const cOpt = { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { padding: 14, usePointStyle: true, font: { size: 11 } } } } };
+
+    const { data: stock } = await supabase
+      .from("dealer_stock").select("quantity, dealer_id, product_id, dealers(shop_name), products(name, is_active)");
+
+    if (!stock || stock.length === 0) return;
+
+    const prodMap = {};
+    stock.forEach(s => { const n = s.products?.name || "Unknown"; prodMap[n] = (prodMap[n] || 0) + s.quantity; });
+    const prodLabels = Object.keys(prodMap).sort((a,b) => prodMap[b] - prodMap[a]);
+
+    new Chart(document.getElementById("chart-prod-stock"), {
+      type: "bar",
+      data: { labels: prodLabels, datasets: [{ label: "Units", data: prodLabels.map(l => prodMap[l]),
+        backgroundColor: colors.slice(0, prodLabels.length), borderRadius: 6 }] },
+      options: { ...cOpt, indexAxis: "y", plugins: { legend: { display: false } },
+        scales: { x: { grid: { display: false } }, y: { grid: { display: false } } } }
+    });
+
+    const holderMap = {};
+    stock.forEach(s => { const n = s.products?.name || "Unknown"; if (!holderMap[n]) holderMap[n] = new Set(); holderMap[n].add(s.dealer_id); });
+    const hLabels = Object.keys(holderMap).sort((a,b) => holderMap[b].size - holderMap[a].size);
+    new Chart(document.getElementById("chart-prod-holders"), {
+      type: "bar",
+      data: { labels: hLabels, datasets: [{ label: "Dealers", data: hLabels.map(l => holderMap[l].size),
+        backgroundColor: colors.slice(0, hLabels.length), borderRadius: 6 }] },
+      options: { ...cOpt, plugins: { legend: { display: false } },
+        scales: { x: { grid: { display: false } }, y: { grid: { color: "#e5e7eb" }, ticks: { stepSize: 1 } } } }
+    });
+
+    const dealerMap = {};
+    stock.forEach(s => { const n = s.dealers?.shop_name || "Unknown"; dealerMap[n] = (dealerMap[n] || 0) + s.quantity; });
+    const topDealers = Object.keys(dealerMap).sort((a,b) => dealerMap[b] - dealerMap[a]).slice(0, 8);
+    const topProducts = prodLabels.slice(0, 6);
+    const dpDatasets = topProducts.map((p, i) => ({
+      label: p, backgroundColor: colors[i],
+      data: topDealers.map(d => stock.filter(s => (s.dealers?.shop_name || "Unknown") === d && (s.products?.name || "Unknown") === p)
+        .reduce((sum, s) => sum + s.quantity, 0))
+    }));
+    new Chart(document.getElementById("chart-dealer-prod"), {
+      type: "bar",
+      data: { labels: topDealers, datasets: dpDatasets },
+      options: { ...cOpt, scales: { x: { stacked: true, grid: { display: false } }, y: { stacked: true, grid: { color: "#e5e7eb" } } } }
+    });
+
+    const prodActive = {};
+    stock.forEach(s => { const n = s.products?.name || "Unknown"; prodActive[n] = s.products?.is_active; });
+    let hasStock = 0, noStock = 0;
+    prodLabels.forEach(p => { (prodMap[p] > 0) ? hasStock++ : noStock++; });
+    const activeCount = prodLabels.filter(p => prodActive[p] === true).length;
+    const inactiveCount = prodLabels.length - activeCount;
+    new Chart(document.getElementById("chart-prod-status"), {
+      type: "doughnut",
+      data: {
+        labels: ["Active (in stock)", "Active (no stock)", "Inactive"],
+        datasets: [{
+          data: [hasStock - (inactiveCount > 0 ? 0 : 0), noStock, inactiveCount],
+          backgroundColor: ["#16a34a", "#ca8a04", "#9ca3af"], borderWidth: 2, borderColor: "#fff"
+        }]
+      },
+      options: { ...cOpt, cutout: "55%" }
+    });
+  }
+
+  await loadCharts();
   await loadProducts();
 })();
 </script>

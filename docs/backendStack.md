@@ -140,13 +140,16 @@ create table admins (
 );
 
 create table products (
-  id         uuid primary key default gen_random_uuid(),
-  name       text not null,
-  image_url  text,                               -- Supabase Storage public URL
-  is_active  boolean not null default true,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  id                uuid primary key default gen_random_uuid(),
+  name              text not null,
+  image_url         text,                               -- Supabase Storage public URL
+  is_active         boolean not null default true,
+  packets_per_bag   integer check (packets_per_bag IS NULL OR packets_per_bag > 0),
+  created_at        timestamptz not null default now(),
+  updated_at        timestamptz not null default now()
 );
+
+comment on column products.packets_per_bag is 'Number of packets in one bag. NULL = product not sold in bags.';
 
 create table dealer_stock (
   dealer_id  uuid not null references dealers(id) on delete cascade,
@@ -246,19 +249,26 @@ Notes:
 that runs atomically inside Postgres — check, update, and audit-log in a single
 transaction. If any step fails, everything rolls back.
 
+### Dual-unit support (packets / bags)
+Products can optionally define `packets_per_bag` (integer, >0). When set:
+- All stored quantities are in **packets** (base unit)
+- RPCs accept an optional `unit` field per item: `"packet"` (default) or `"bag"`
+- Input in bags is converted: `packets = floor(bags * packets_per_bag)`
+- Responses include both `packets` and `bags` for display
+- If `packets_per_bag` is NULL/unset, `unit: "bag"` is rejected with `VALIDATION_ERROR`
+
 Page JS calls them like:
 
 ```js
 const { data, error } = await supabase.rpc("record_sale", {
-  p_product: productId,
-  p_quantity: qty,
-  p_client_ref: crypto.randomUUID(),   // replay-safe double-click guard
+  p_items: [{ product_id, quantity, unit: "bag" }, …],
+  p_client_ref: crypto.randomUUID(),
 });
 ```
 
 ### 5.1 `record_sale(p_items jsonb, p_client_ref uuid)` — dealer Sale (multi-item)
 One atomic transaction for **all items** in the sale. `p_items` is an array of
-`{ product_id, quantity }`. Each row is checked (the post-failure read
+`{ product_id, quantity, unit? }`. Each row is checked (the post-failure read
 disambiguates `409 CONCURRENT_MODIFICATION` from `422 INSUFFICIENT_STOCK`),
 decremented, and audit-logged; per-item `quantity_before/after` are returned.
 Replaying the same `p_client_ref` is a no-op (`replayed: true`).
@@ -266,66 +276,33 @@ Replaying the same `p_client_ref` is a no-op (`replayed: true`).
 Page call:
 ```js
 const { data, error } = await supabase.rpc("record_sale", {
-  p_items: [{ product_id, quantity }, …],
-  p_client_ref: crypto.randomUUID(),   // replay-safe double-click guard
+  p_items: [{ product_id, quantity, unit: "packet" }, …],
+  p_client_ref: crypto.randomUUID(),
 });
-// data = { replayed: false, items: [{ product_id, quantity_before, quantity_after }, …] }
-```
-```sql
--- pseudo-structure (full SQL in supabase/schema.sql):
-if p_items empty -> raise VALIDATION_ERROR
-if p_client_ref already used -> return { replayed: true }
-for item in p_items:
-  read quantity_before                                   -- post-failure disambiguation
-  update dealer_stock set quantity = quantity - n
-   where dealer_id = v_dealer and product_id = item
-     and quantity >= n
-  if not found:
-     raise INSUFFICIENT_STOCK   (if before < n)  else  raise CONCURRENT_MODIFICATION
-  insert sales (client_ref = p_client_ref)
-  insert stock_movements (SALE, -n)
-return { replayed: false, items: [{quantity_before, quantity_after}, …] }
-```
-The dealer id comes from the JWT claim, so a dealer can only ever touch their
-own stock — even though the function runs with elevated rights.
-
-### 5.2 `approve_order(p_order)` — admin sends stock (Order queue)
-Guarded by role + status (replay-safe: only a `pending` order is processed):
-
-```sql
--- inside the function:
-if (auth.jwt() -> 'app_metadata' ->> 'role') <> 'admin' then
-  raise exception 'FORBIDDEN';
-end if;
-update orders set status='sent', approved_at=now(), fulfilled_at=now()
- where id = p_order and status = 'pending';
-if not found then raise exception 'ORDER_NOT_PENDING'; end if;
--- then, for each row in order_items of this order:
---   upsert dealer_stock + r.quantity  (on conflict do update)
---   insert stock_movements (dealer_id, r.product_id, +r.quantity, 'ORDER', p_order)
+// data = { replayed: false, items: [{ product_id, quantity_before, quantity_after, unit, input_quantity }, …] }
 ```
 
-### 5.3 `accept_return(p_return)` / `reject_return(p_return)` — Return queue
-`accept_return`: role guard → `returns.status: pending → accepted` → for each
-`return_items` row run the conditional
-`update dealer_stock set quantity = quantity - r.quantity ... and quantity >= r.quantity`
-→ any `not found` raises `INSUFFICIENT_STOCK` and the whole transaction rolls
-back → insert `RETURN` movements (negative). `reject_return`: role guard →
-status `pending → rejected`; no stock movement.
+### 5.2 `create_order(p_items jsonb, p_client_ref uuid)` — dealer Order (multi-item)
+Same `unit` support as `record_sale`. Creates pending order + items atomically.
 
-### 5.4 `allocate_stock(p_dealer, p_items jsonb)` — direct allocation (multi-item)
-Role guard (admin) → for each `{ product_id, quantity }` upsert
+### 5.3 `create_return(p_items jsonb, p_client_ref uuid)` — dealer Return (multi-item)
+Same `unit` support. Verifies dealer holds sufficient packets before allowing.
+
+### 5.4 `approve_order(p_order)` — admin sends stock (Order queue)
+Returns `{ items: [{ product_id, packets, bags }, …] }` for display.
+
+### 5.5 `accept_return(p_return)` / `reject_return(p_return)` — Return queue
+`accept_return` returns `{ items: [{ product_id, packets, bags }, …] }`.
+
+### 5.6 `allocate_stock(p_dealer, p_items jsonb)` — direct allocation (multi-item)
+Role guard (admin) → for each `{ product_id, quantity, unit? }` upsert
 `dealer_stock + qty` and write one `ALLOCATION` movement — one transaction.
-Company side is manual, so nothing is decremented.
+Returns `{ count, items: [{ product_id, packets, bags, unit, input_quantity }, …] }`.
 
-### 5.5 `redistribute_stock(p_from_dealer, p_to_dealer, p_items jsonb)`
-Role guard → for each item: subtract from source with the `quantity >=` guard
-(failure = `INSUFFICIENT_STOCK`, full rollback) → add to target via upsert →
-write a **paired** `REDISTRIBUTE` movement (`-qty` source, `+qty` target)
-sharing one `reference_id`, so each move is reconstructable in the audit trail.
-Rejects `from === to`.
+### 5.7 `redistribute_stock(p_from_dealer, p_to_dealer, p_items jsonb)`
+Same `unit` support. Returns `{ count, items: [{ product_id, packets, bags, unit, input_quantity }, …] }`.
 
-### 5.6 Order / Return creation (no RPC needed)
+### 5.8 Order / Return creation (no RPC needed)
 Creating an order or return is plain inserts the dealer makes from their own
 pages — RLS forces `dealer_id` to equal the caller's claim. Both carry a
 `client_ref` so a retried submit can't create duplicates (the unique column is
@@ -350,6 +327,7 @@ await supabase.from("order_items").insert(
   }))
 );
 ```
+
 Same pattern for `returns` + `return_items`. Return/sale items can be multiple
 products in one request (multi-item carts on the dealer pages).
 

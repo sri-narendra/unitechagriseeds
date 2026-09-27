@@ -24,6 +24,7 @@
 
   <div class="toolbar">
     <button class="btn btn-primary" id="add-btn">+ Add dealer</button>
+    <button class="btn btn-danger" id="clear-all-btn">Clear All History</button>
     <div class="search-input">
       <input id="search" placeholder="Search dealers…">
     </div>
@@ -145,6 +146,7 @@
       <td class="row">
         <button class="btn btn-primary btn-sm" data-open="${d.id}">Open</button>
         <button class="btn btn-ghost btn-xs" data-edit="${d.id}">Edit</button>
+        <button class="btn btn-ghost btn-xs" data-pw="${d.id}">Reset Password</button>
         <button class="btn btn-ghost btn-xs" data-toggle="${d.id}">${d.is_active ? "Deactivate" : "Activate"}</button>
         <button class="btn btn-danger btn-xs" data-delete="${d.id}">Delete</button>
       </td></tr>`).join("");
@@ -168,6 +170,7 @@
       toast("Dealer deleted.");
       await loadDealers();
     }));
+    rows.querySelectorAll("[data-pw]").forEach(b => b.addEventListener("click", () => openResetPwModal(b.dataset.pw)));
   }
 
   // ---- add / edit dealer modal ----
@@ -178,14 +181,18 @@
       <form id="d-form">
         ${DEALER_FIELDS.map(([k, label]) => `
           <div class="field"><label>${label}</label>
-          <input id="f-${k}" value="${esc(d ? d[k] || "" : "")}" ${k === "account_id" ? "required readonly" : ""}></div>`).join("")}
+          <input id="f-${k}" value="${esc(d ? d[k] || "" : "")}" ${k === "account_id" ? (isEdit ? "required readonly" : "required") : ""}></div>`).join("")}
         ${isEdit ? "" : `
         <div class="field"><label>Password (min 10 chars, upper+lower+number)</label>
         <input id="f-password" type="password" required minlength="10" autocomplete="new-password"></div>
         <div class="field"><label>Initial stock (optional)</label>
           <div class="field-row">
-            <select id="is-product">${(products || []).map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join("")}</select>
-            <input id="is-qty" type="number" min="1" step="1" value="1" style="width:90px">
+            <select id="is-product">${(products || []).map(p => `<option value="${p.id}" data-ppb="${p.packets_per_bag || ''}">${esc(p.name)}</option>`).join("")}</select>
+            <input id="is-qty" type="number" min="1" step="1" value="1" style="width:80px">
+            <select id="is-unit" style="width:90px">
+              <option value="packet">Packets</option>
+              <option value="bag">Bags</option>
+            </select>
             <button class="btn btn-ghost btn-sm" type="button" id="is-add">Add</button>
           </div>
           <div id="is-list" class="hint" style="margin-top:6px">No initial stock items.</div>
@@ -199,24 +206,48 @@
         </div>
       </form>`);
     document.getElementById("d-cancel").addEventListener("click", closeModal);
+    // Disable "Bag" option when product has no packets_per_bag (initial stock modal)
+    if (!isEdit) {
+      const isProdSel = document.getElementById("is-product");
+      const isUnitSel = document.getElementById("is-unit");
+      function updateInitialUnit() {
+        const pid = isProdSel.value;
+        const p = products.find(x => x.id === pid);
+        const ppb = p?.packets_per_bag;
+        const bagOpt = isUnitSel.querySelector('option[value="bag"]');
+        if (bagOpt) bagOpt.disabled = !ppb;
+      }
+      isProdSel.addEventListener("change", updateInitialUnit);
+      updateInitialUnit(); // initial
+    }
 
     const initialStock = new Map();
     if (!isEdit) {
       const renderIS = () => {
         document.getElementById("is-list").innerHTML = initialStock.size === 0
           ? "No initial stock items."
-          : [...initialStock.entries()].map(([pid, q]) => {
+          : [...initialStock.entries()].map(([pid, item]) => {
               const p = products.find(x => x.id === pid);
-              return `${esc(p ? p.name : pid)} × ${q}`;
+              const ppb = p?.packets_per_bag;
+              const bags = ppb && ppb > 0 ? (item.qty / ppb).toFixed(2) : null;
+              return `${esc(p ? p.name : pid)} × ${item.qty} pkt${bags ? ` (${bags} bags)` : ''} [${item.unit}]`;
             }).join(" · ");
       };
       renderIS();
       document.getElementById("is-add").addEventListener("click", () => {
         const pid = document.getElementById("is-product").value;
-        const q = parseInt(document.getElementById("is-qty").value, 10);
+        const qty = parseInt(document.getElementById("is-qty").value, 10);
+        const unit = document.getElementById("is-unit").value;
         if (!pid) return toast("Add products first (Products tab).", false);
-        if (!Number.isInteger(q) || q <= 0) return toast("Enter a positive whole number.", false);
-        initialStock.set(pid, (initialStock.get(pid) || 0) + q);
+        if (!Number.isInteger(qty) || qty <= 0) return toast("Enter a positive whole number.", false);
+        const p = products.find(x => x.id === pid);
+        const ppb = p?.packets_per_bag;
+        if (unit === 'bag' && !ppb) return toast("This product doesn't have packets per bag configured.", false);
+        const packetsToAdd = unit === 'bag' && ppb ? qty * ppb : qty;
+        const existing = initialStock.get(pid);
+        const currentQty = existing ? existing.qty : 0;
+        const newQty = currentQty + packetsToAdd;
+        initialStock.set(pid, { qty: newQty, unit });
         renderIS();
       });
     }
@@ -240,7 +271,7 @@
             body: JSON.stringify({
               ...values,
               password,
-              initial_stock: [...initialStock.entries()].map(([product_id, quantity]) => ({ product_id, quantity })),
+              initial_stock: [...initialStock.entries()].map(([product_id, item]) => ({ product_id, quantity: item.qty, unit: item.unit })),
             }),
           });
           const j = await r.json().catch(() => ({}));
@@ -253,6 +284,41 @@
   }
 
   // ---- allocate stock modal (docs/backendStack.md §5.4) ----
+  function openResetPwModal(dealerId) {
+    const d = dealers.find(x => x.id === dealerId);
+    openModal(`
+      <h3>Reset password — ${esc(d.shop_name || d.account_id)}</h3>
+      <form id="pw-form">
+        <div class="field"><label>New password (min 10 chars, upper+lower+number)</label>
+        <input id="f-new-pw" type="password" required minlength="10" autocomplete="new-password"></div>
+        <p class="hint">Dealer will need to use this new password on next login.</p>
+        <div class="modal-actions">
+          <button class="btn btn-primary" type="submit">Update password</button>
+          <button class="btn btn-ghost" type="button" id="pw-cancel">Cancel</button>
+        </div>
+      </form>`);
+    document.getElementById("pw-cancel").addEventListener("click", closeModal);
+    document.getElementById("pw-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const pw = document.getElementById("f-new-pw").value;
+      const btn = e.target.querySelector("[type=submit]");
+      btn.disabled = true;
+      try {
+        const r = await fetch("/api/reset-dealer-password", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: "Bearer " + session.access_token },
+          body: JSON.stringify({ user_id: dealerId, password: pw }),
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok || !j.ok) throw new Error(j.error ? j.error.message : "Request failed");
+        toast("Password updated.");
+        closeModal();
+      } catch (ex) { toast(friendly(ex), false); }
+      finally { btn.disabled = false; }
+    });
+  }
+
+  // ---- allocate stock modal (docs/backendStack.md §5.4) ----
   function openAllocModal(dealerId) {
     const d = dealers.find(x => x.id === dealerId);
     const allocItems = new Map();
@@ -260,19 +326,25 @@
       const list = document.getElementById("a-list");
       const submit = document.getElementById("a-submit");
       if (allocItems.size === 0) { list.textContent = "No items added yet."; submit.disabled = true; return; }
-      list.innerHTML = [...allocItems.entries()].map(([pid, q]) => {
+      list.innerHTML = [...allocItems.entries()].map(([pid, item]) => {
         const p = products.find(x => x.id === pid);
-        return `<span style="margin-right:12px">${esc(p ? p.name : pid)} &times; ${q}</span>`;
+        const ppb = p?.packets_per_bag;
+        const bags = ppb && ppb > 0 ? (item.qty / ppb).toFixed(2) : null;
+        return `<span style="margin-right:12px">${esc(p ? p.name : pid)} × ${item.qty} pkt${bags ? ` (${bags} bags)` : ''} [${item.unit}]</span>`;
       }).join("");
       submit.disabled = false;
     };
     openModal(`
       <h3>Allocate stock to ${esc(d.shop_name || d.account_id)}</h3>
       <div class="field"><label>Product</label>
-        <select id="a-product">${(products || []).map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join("")}</select></div>
+        <select id="a-product">${(products || []).map(p => `<option value="${p.id}" data-ppb="${p.packets_per_bag || ''}">${esc(p.name)}</option>`).join("")}</select></div>
       <div class="field-row">
         <div class="field" style="flex:1"><label>Quantity</label>
           <input id="a-qty" type="number" min="1" step="1" inputmode="numeric" value="1"></div>
+        <select id="a-unit" style="width:90px">
+          <option value="packet">Packets</option>
+          <option value="bag">Bags</option>
+        </select>
         <button class="btn btn-ghost btn-sm" id="a-add" type="button">+ Add</button>
       </div>
       <div id="a-list" class="hint" style="margin-top:10px">No items added yet.</div>
@@ -283,12 +355,32 @@
       <p class="hint" style="margin-top:8px">Adds to this dealer's inventory atomically and records ALLOCATION movements.</p>
     `);
     document.getElementById("a-cancel").addEventListener("click", closeModal);
+    // Disable "Bag" option when product has no packets_per_bag
+    const aProdSel = document.getElementById("a-product");
+    const aUnitSel = document.getElementById("a-unit");
+    function updateAllocUnit() {
+      const pid = aProdSel.value;
+      const p = products.find(x => x.id === pid);
+      const ppb = p?.packets_per_bag;
+      const bagOpt = aUnitSel.querySelector('option[value="bag"]');
+      if (bagOpt) bagOpt.disabled = !ppb;
+    }
+    aProdSel.addEventListener("change", updateAllocUnit);
+    updateAllocUnit(); // initial
     document.getElementById("a-add").addEventListener("click", () => {
       const pid = document.getElementById("a-product").value;
       const qty = Number(document.getElementById("a-qty").value);
+      const unit = document.getElementById("a-unit").value;
       if (!pid) return toast("Add products first (Products tab).", false);
       if (!Number.isSafeInteger(qty) || qty <= 0) return toast("Enter a positive whole number.", false);
-      allocItems.set(pid, (allocItems.get(pid) || 0) + qty);
+      const p = products.find(x => x.id === pid);
+      const ppb = p?.packets_per_bag;
+      if (unit === 'bag' && !ppb) return toast("This product doesn't have packets per bag configured.", false);
+      const packetsToAdd = unit === 'bag' && ppb ? qty * ppb : qty;
+      const existing = allocItems.get(pid);
+      const currentQty = existing ? existing.qty : 0;
+      const newQty = currentQty + packetsToAdd;
+      allocItems.set(pid, { qty: newQty, unit });
       renderList();
     });
     document.getElementById("a-submit").addEventListener("click", async () => {
@@ -296,7 +388,7 @@
       if (allocItems.size === 0) return;
       btn.disabled = true;
       try {
-        const p_items = [...allocItems.entries()].map(([product_id, quantity]) => ({ product_id, quantity }));
+        const p_items = [...allocItems.entries()].map(([product_id, item]) => ({ product_id, quantity: item.qty, unit: item.unit }));
         const { error } = await supabase.rpc("allocate_stock", { p_dealer: dealerId, p_items });
         if (error) throw error;
         toast("Stock allocated.");
@@ -311,6 +403,13 @@
 
   document.getElementById("search").addEventListener("input", loadDealers);
   document.getElementById("add-btn").addEventListener("click", () => openDealerModal(null));
+  document.getElementById("clear-all-btn").addEventListener("click", async () => {
+    if (!confirm("Clear ALL dealers' stock history? This removes all inventory records.")) return;
+    const { error } = await supabase.from("dealer_stock").update({ deleted_at: new Date().toISOString() }).is("deleted_at", null);
+    if (error) return toast(friendly(error), false);
+    toast("All stock history cleared.");
+    await loadDealers();
+  });
 
   // ---- dealer detail: activity popup ----
   async function openDetail(id) {
@@ -318,15 +417,15 @@
     openModal('<div class="card"><div class="skeleton"></div><div class="skeleton"></div></div>');
 
     const [inv, salesL, returnsL, ordersL, movesL] = await Promise.all([
-      supabase.from("dealer_stock").select("quantity, products(name)")
+      supabase.from("dealer_stock").select("quantity, products(name, packets_per_bag)")
         .eq("dealer_id", id).order("quantity", { ascending: false }),
-      supabase.from("sale_transactions").select("created_at, sale_items(quantity, products(name))")
+      supabase.from("sale_transactions").select("created_at, sale_items(quantity, products(name, packets_per_bag))")
         .eq("dealer_id", id).order("created_at", { ascending: false }).limit(5),
-      supabase.from("returns").select("status, created_at, return_items(quantity, products(name))")
+      supabase.from("returns").select("status, created_at, return_items(quantity, products(name, packets_per_bag))")
         .eq("dealer_id", id).order("created_at", { ascending: false }).limit(5),
-      supabase.from("orders").select("status, created_at, order_items(quantity, products(name))")
+      supabase.from("orders").select("status, created_at, order_items(quantity, products(name, packets_per_bag))")
         .eq("dealer_id", id).order("created_at", { ascending: false }).limit(5),
-      supabase.from("stock_movements").select("quantity, movement_type, created_at, products(name)")
+      supabase.from("stock_movements").select("quantity, movement_type, created_at, products(name, packets_per_bag)")
         .eq("dealer_id", id).order("created_at", { ascending: false }).limit(8),
     ]);
 
@@ -338,26 +437,47 @@
     const maxQty = Math.max(...invData.map(r => r.quantity), 1);
     const invChart = invData.length
       ? '<div class="inv-chart">' + invData.map(r => {
-          const pct = Math.max((r.quantity / maxQty) * 100, r.quantity > 0 ? 4 : 0);
+          const qty = r.quantity;
+          const ppb = r.products?.packets_per_bag;
+          const bags = ppb && ppb > 0 ? (qty / ppb).toFixed(2) : null;
+          const pct = Math.max((qty / maxQty) * 100, qty > 0 ? 4 : 0);
           const name = esc(r.products ? r.products.name : "—");
           return `<div class="inv-bar-row">
             <span class="inv-bar-label" title="${name}">${name}</span>
             <div class="inv-bar-track"><div class="inv-bar-fill" style="width:${pct}%">
-              ${r.quantity > 0 ? `<span class="inv-bar-val">${r.quantity}</span>` : ""}
+              ${qty > 0 ? `<span class="inv-bar-val">${qty} pkt${bags ? ` (${bags} bags)` : ''}</span>` : ""}
             </div></div>
-            ${r.quantity === 0 ? '<span class="inv-bar-zero">0</span>' : ""}
+            ${qty === 0 ? '<span class="inv-bar-zero">0</span>' : ""}
           </div>`;
         }).join("") + '</div>'
       : '<div class="empty">No stock yet.</div>';
     const salesRows = (salesL.data || []).map(s =>
-      `<tr><td>${(s.sale_items || []).map(i => `${esc(i.products ? i.products.name : "—")} × ${i.quantity}`).join("<br>")}</td><td>${fmtDate(s.created_at)}</td></tr>`).join("");
+      `<tr><td>${(s.sale_items || []).map(i => {
+        const qty = i.quantity;
+        const ppb = i.products?.packets_per_bag;
+        const bags = ppb && ppb > 0 ? (qty / ppb).toFixed(2) : null;
+        return `${esc(i.products ? i.products.name : "—")} × ${qty} pkt${bags ? ` (${bags} bags)` : ''}`;
+      }).join("<br>")}</td><td>${fmtDate(s.created_at)}</td></tr>`).join("");
     const retRows = (returnsL.data || []).map(r =>
-      `<tr><td>${(r.return_items || []).map(i => `${esc(i.products ? i.products.name : "—")} × ${i.quantity}`).join("<br>")}</td><td>${pill(r.status)}</td><td>${fmtDate(r.created_at)}</td></tr>`).join("");
+      `<tr><td>${(r.return_items || []).map(i => {
+        const qty = i.quantity;
+        const ppb = i.products?.packets_per_bag;
+        const bags = ppb && ppb > 0 ? (qty / ppb).toFixed(2) : null;
+        return `${esc(i.products ? i.products.name : "—")} × ${qty} pkt${bags ? ` (${bags} bags)` : ''}`;
+      }).join("<br>")}</td><td>${pill(r.status)}</td><td>${fmtDate(r.created_at)}</td></tr>`).join("");
     const ordRows = (ordersL.data || []).map(o =>
-      `<tr><td>${(o.order_items || []).map(i => `${esc(i.products ? i.products.name : "—")} × ${i.quantity}`).join("<br>")}</td><td>${pill(o.status)}</td><td>${fmtDate(o.created_at)}</td></tr>`).join("");
+      `<tr><td>${(o.order_items || []).map(i => {
+        const qty = i.quantity;
+        const ppb = i.products?.packets_per_bag;
+        const bags = ppb && ppb > 0 ? (qty / ppb).toFixed(2) : null;
+        return `${esc(i.products ? i.products.name : "—")} × ${qty} pkt${bags ? ` (${bags} bags)` : ''}`;
+      }).join("<br>")}</td><td>${pill(o.status)}</td><td>${fmtDate(o.created_at)}</td></tr>`).join("");
     const mvRows = (movesL.data || []).map(m => {
       const isIn = m.quantity > 0;
-      return `<tr><td>${isIn ? "▲ In" : "▼ Out"}</td><td>${esc(m.products ? m.products.name : "—")}</td><td class="num">${isIn ? "+" : ""}${m.quantity}</td><td>${esc(m.movement_type)}</td><td>${fmtDate(m.created_at)}</td></tr>`;
+      const qty = Math.abs(m.quantity);
+      const ppb = m.products?.packets_per_bag;
+      const bags = ppb && ppb > 0 ? (qty / ppb).toFixed(2) : null;
+      return `<tr><td>${isIn ? "▲ In" : "▼ Out"}</td><td>${esc(m.products ? m.products.name : "—")}</td><td class="num">${isIn ? "+" : ""}${qty} pkt${bags ? ` (${bags} bags)` : ''}</td><td>${esc(m.movement_type)}</td><td>${fmtDate(m.created_at)}</td></tr>`;
     }).join("");
 
     modal.innerHTML = `
@@ -369,7 +489,9 @@
         </div>
         <div class="activity-actions">
           <button class="btn btn-primary btn-sm" id="d-alloc">Allocate Stock</button>
+          <button class="btn btn-ghost btn-sm" id="d-reset-pw">Reset Password</button>
           <button class="btn btn-ghost btn-sm" id="d-edit">Edit dealer</button>
+          <button class="btn btn-danger btn-sm" id="d-clear">Clear History</button>
         </div>
       </div>
       <div class="section-label">Current inventory</div>
@@ -389,7 +511,15 @@
 
     document.getElementById("d-close").addEventListener("click", closeModal);
     document.getElementById("d-edit").addEventListener("click", () => { closeModal(); openDealerModal(d); });
+    document.getElementById("d-reset-pw").addEventListener("click", () => { closeModal(); openResetPwModal(id); });
     document.getElementById("d-alloc").addEventListener("click", () => { closeModal(); openAllocModal(id); });
+    document.getElementById("d-clear").addEventListener("click", async () => {
+      if (!confirm(`Clear all stock history for "${d.shop_name || d.account_id}"? This removes their inventory records.`)) return;
+      const { error } = await supabase.from("dealer_stock").update({ deleted_at: new Date().toISOString() }).eq("dealer_id", id).is("deleted_at", null);
+      if (error) return toast(friendly(error), false);
+      toast("Stock history cleared.");
+      await openDetail(id);
+    });
   }
 
   await loadDealers();

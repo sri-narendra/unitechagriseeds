@@ -26,9 +26,18 @@
       <select id="product"></select>
       <p class="hint" id="avail"></p>
     </div>
-    <div class="field">
-      <label for="qty">Quantity sold (units)</label>
-      <input id="qty" type="number" min="1" step="1" inputmode="numeric" value="1">
+    <div class="field-row">
+      <div class="field" style="flex:1">
+        <label for="qty">Quantity</label>
+        <input id="qty" type="number" min="1" step="1" inputmode="numeric" value="1">
+      </div>
+      <div class="field" style="flex:1">
+        <label for="unit">Unit</label>
+        <select id="unit">
+          <option value="packet">Packets</option>
+          <option value="bag">Bags</option>
+        </select>
+      </div>
     </div>
     <div class="btn-group">
       <button class="btn btn-secondary" id="add-item" type="button">+ Add item</button>
@@ -117,7 +126,7 @@
   async function loadStock() {
     const { data } = await supabase
       .from("dealer_stock")
-      .select("quantity, product_id, products(name)")
+      .select("quantity, product_id, products(name, packets_per_bag)")
       .eq("dealer_id", dealerId)
       .order("updated_at", { ascending: false });
     stockRows = data || [];
@@ -132,13 +141,25 @@
     sel.disabled = false;
     document.getElementById("add-item").disabled = false;
     sel.innerHTML = stockRows.map(r =>
-      `<option value="${r.product_id}">${esc(r.products ? r.products.name : "Unknown")} — ${r.quantity} in stock</option>`).join("");
+      `<option value="${r.product_id}" data-ppb="${r.products?.packets_per_bag || ''}">${esc(r.products ? r.products.name : "Unknown")} — ${r.quantity} packets${r.products?.packets_per_bag ? ` (${(r.quantity / r.products.packets_per_bag).toFixed(2)} bags)` : ''} in stock</option>`).join("");
     updateAvail();
   }
 
   function updateAvail() {
-    const row = stockRows.find(r => r.product_id === document.getElementById("product").value);
-    document.getElementById("avail").textContent = row ? `Available: ${row.quantity} units` : "";
+    const sel = document.getElementById("product");
+    const opt = sel.options[sel.selectedIndex];
+    const ppb = opt?.dataset?.ppb ? parseInt(opt.dataset.ppb) : null;
+    const row = stockRows.find(r => r.product_id === sel.value);
+    if (!row) { document.getElementById("avail").textContent = ""; return; }
+    const qty = row.quantity;
+    const bags = ppb && ppb > 0 ? (qty / ppb).toFixed(2) : null;
+    document.getElementById("avail").textContent = `Available: ${qty} packets${bags ? ` (${bags} bags)` : ''}`;
+    // Disable "Bag" option if product has no packets_per_bag
+    const unitSel = document.getElementById("unit");
+    if (unitSel) {
+      const bagOpt = unitSel.querySelector('option[value="bag"]');
+      if (bagOpt) bagOpt.disabled = !ppb;
+    }
   }
   document.getElementById("product").addEventListener("change", updateAvail);
 
@@ -152,28 +173,30 @@
       return;
     }
     card.style.display = "block";
-    rows.innerHTML = [...saleCart.entries()].map(([pid, qty]) => {
+    rows.innerHTML = [...saleCart.entries()].map(([pid, item]) => {
       const p = stockRows.find(r => r.product_id === pid);
       const name = p && p.products ? p.products.name : "Unknown";
-      const max = p ? p.quantity : qty;
+      const ppb = p?.products?.packets_per_bag;
+      const bags = ppb && ppb > 0 ? (item.qty / ppb).toFixed(2) : null;
+      const max = p ? p.quantity : item.qty;
       return `<tr>
         <td>${esc(name)}</td>
         <td class="num"><span class="row" style="gap:6px;justify-content:flex-end">
-          <button class="btn btn-ghost btn-sm" data-dec="${pid}" ${qty <= 1 ? "disabled" : ""}>−</button>
-          <b class="num">${qty}</b>
-          <button class="btn btn-ghost btn-sm" data-inc="${pid}" ${qty >= max ? "disabled" : ""}>+</button>
+          <button class="btn btn-ghost btn-sm" data-dec="${pid}" ${item.qty <= 1 ? "disabled" : ""}>−</button>
+          <b class="num">${item.qty} pkt${bags ? ` (${bags} bags)` : ''}</b>
+          <button class="btn btn-ghost btn-sm" data-inc="${pid}" ${item.qty >= max ? "disabled" : ""}>+</button>
         </span></td>
         <td><button class="btn btn-danger btn-sm" data-rm="${pid}">Remove</button></td>
       </tr>`;
     }).join("");
     submit.disabled = false;
     rows.querySelectorAll("[data-dec]").forEach(b => b.addEventListener("click", () => {
-      const id = b.dataset.dec; saleCart.set(id, saleCart.get(id) - 1); renderCart();
+      const id = b.dataset.dec; saleCart.set(id, { ...saleCart.get(id), qty: saleCart.get(id).qty - 1 }); renderCart();
     }));
     rows.querySelectorAll("[data-inc]").forEach(b => b.addEventListener("click", () => {
       const id = b.dataset.inc;
       const p = stockRows.find(r => r.product_id === id);
-      if (p && saleCart.get(id) < p.quantity) { saleCart.set(id, saleCart.get(id) + 1); renderCart(); }
+      if (p && saleCart.get(id).qty < p.quantity) { saleCart.set(id, { ...saleCart.get(id), qty: saleCart.get(id).qty + 1 }); renderCart(); }
     }));
     rows.querySelectorAll("[data-rm]").forEach(b => b.addEventListener("click", () => {
       saleCart.delete(b.dataset.rm); renderCart();
@@ -183,12 +206,18 @@
   document.getElementById("add-item").addEventListener("click", () => {
     const pid = document.getElementById("product").value;
     const qty = Number(document.getElementById("qty").value);
+    const unit = document.getElementById("unit").value;
     if (!pid) return toast("No stock available to sell.", false);
     if (!Number.isSafeInteger(qty) || qty <= 0) return toast("Enter a positive whole number.", false);
     const p = stockRows.find(r => r.product_id === pid);
-    const newQty = (saleCart.get(pid) || 0) + qty;
-    if (p && newQty > p.quantity) return toast(`Only ${p.quantity} available in stock.`, false);
-    saleCart.set(pid, newQty);
+    const ppb = p?.products?.packets_per_bag;
+    if (unit === 'bag' && !ppb) return toast("This product doesn't have packets per bag configured.", false);
+    const packetsToAdd = unit === 'bag' && ppb ? qty * ppb : qty;
+    const existing = saleCart.get(pid);
+    const currentQty = existing ? existing.qty : 0;
+    const newQty = currentQty + packetsToAdd;
+    if (p && newQty > p.quantity) return toast(`Only ${p.quantity} packets available in stock.`, false);
+    saleCart.set(pid, { qty: newQty, unit });
     renderCart();
     toast(`${p && p.products ? p.products.name : "Item"} added to sale.`);
   });
@@ -199,7 +228,7 @@
     if (saleCart.size === 0) return;
     submit.disabled = true;
     try {
-      const items = [...saleCart.entries()].map(([product_id, quantity]) => ({ product_id, quantity }));
+      const items = [...saleCart.entries()].map(([product_id, item]) => ({ product_id, quantity: item.qty, unit: item.unit }));
       const { data, error } = await supabase.rpc("record_sale", {
         p_items: items,
         p_client_ref: saleClientRef,
@@ -221,7 +250,7 @@
   async function loadSales() {
     const { data } = await supabase
       .from("sale_transactions")
-      .select("created_at, sale_items(quantity, products(name))")
+      .select("created_at, sale_items(quantity, products(name, packets_per_bag))")
       .eq("dealer_id", dealerId)
       .order("created_at", { ascending: false })
       .limit(5);
@@ -230,7 +259,12 @@
     if (!data || data.length === 0) { empty.style.display = "block"; rows.innerHTML = ""; return; }
     empty.style.display = "none";
     rows.innerHTML = data.map(s => `<tr>
-      <td>${(s.sale_items || []).map(i => `${esc(i.products ? i.products.name : "—")} × ${i.quantity}`).join("<br>")}</td>
+      <td>${(s.sale_items || []).map(i => {
+        const qty = i.quantity;
+        const ppb = i.products?.packets_per_bag;
+        const bags = ppb && ppb > 0 ? (qty / ppb).toFixed(2) : null;
+        return `${esc(i.products ? i.products.name : "—")} × ${qty} pkt${bags ? ` (${bags} bags)` : ''}`;
+      }).join("<br>")}</td>
       <td>${fmtDate(s.created_at)}</td>
     </tr>`).join("");
   }

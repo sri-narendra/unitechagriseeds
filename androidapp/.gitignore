@@ -1,0 +1,17 @@
+# Gradle / Android build artifacts (machine-local, never commit)
+.gradle/
+build/
+app/build/
+local.properties
+.idea/
+*.iml
+.kotlin/
+captures/
+.cxx/
+output.json
+*.apk.idsig
+*.apk
+
+# Local keystores / secrets
+*.keystore
+*.jks
